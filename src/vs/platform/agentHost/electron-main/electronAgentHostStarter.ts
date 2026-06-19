@@ -19,7 +19,7 @@ import { getResolvedShellEnv } from '../../shell/node/shellEnv.js';
 import { NullTelemetryService } from '../../telemetry/common/telemetryUtils.js';
 import { UtilityProcess } from '../../utilityProcess/electron-main/utilityProcess.js';
 import { IAgentHostConnection, IAgentHostStarter } from '../common/agent.js';
-import { AgentHostClaudeAgentEnabledSettingId, AgentHostCodexAgentBinaryArgsSettingId, AgentHostCodexAgentEnabledSettingId, AgentHostCodexAgentSdkRootSettingId, AgentHostCodexAgentCodexHomeSettingId, AgentHostOTelCaptureContentSettingId, AgentHostOTelDbSpanExporterEnabledSettingId, AgentHostOTelEnabledSettingId, AgentHostOTelExporterTypeSettingId, AgentHostOTelOtlpEndpointSettingId, AgentHostOTelOutfileSettingId, buildAgentHostOTelEnv, buildAgentSdkEnv } from '../common/agentService.js';
+import { AgentHostClaudeAgentEnabledSettingId, AgentHostClaudeUseSubscriptionSettingId, AgentHostCodexAgentBinaryArgsSettingId, AgentHostCodexAgentEnabledSettingId, AgentHostCodexAgentSdkRootSettingId, AgentHostCodexAgentCodexHomeSettingId, AgentHostOTelCaptureContentSettingId, AgentHostOTelDbSpanExporterEnabledSettingId, AgentHostOTelEnabledSettingId, AgentHostOTelExporterTypeSettingId, AgentHostOTelOtlpEndpointSettingId, AgentHostOTelOutfileSettingId, buildAgentHostOTelEnv, buildAgentSdkEnv } from '../common/agentService.js';
 import { deepClone } from '../../../base/common/objects.js';
 import '../common/agentHost.config.contribution.js';
 import '../common/agentHostStarter.config.contribution.js';
@@ -74,6 +74,7 @@ export class ElectronAgentHostStarter extends Disposable implements IAgentHostSt
 			codexHome: this._configurationService.getValue<string>(AgentHostCodexAgentCodexHomeSettingId),
 			codexBinaryArgs: this._configurationService.getValue<readonly string[]>(AgentHostCodexAgentBinaryArgsSettingId),
 			claudeAgentEnabled: this._configurationService.getValue<boolean>(AgentHostClaudeAgentEnabledSettingId),
+			claudeUseSubscription: this._configurationService.getValue<boolean>(AgentHostClaudeUseSubscriptionSettingId),
 			codexAgentEnabled: this._configurationService.getValue<boolean>(AgentHostCodexAgentEnabledSettingId),
 		}, process.env);
 

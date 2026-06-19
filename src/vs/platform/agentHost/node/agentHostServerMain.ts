@@ -297,6 +297,7 @@ async function main(): Promise<void> {
 		//     `product.agentSdks.claude` entry. Codex still requires the
 		//     env-var override or product config.
 		if (isAgentEnabled(process.env[AgentHostClaudeAgentEnabledEnvVar], true) && (!environmentService.isBuilt || agentSdkDownloader.isAvailable(ClaudeSdkPackage))) {
+			// ClaudeAgent reads the `…useClaudeSubscription` env var itself.
 			const claudeAgent = disposables.add(instantiationService.createInstance(ClaudeAgent));
 			agentService.registerProvider(claudeAgent);
 			log('ClaudeAgent registered');

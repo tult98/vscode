@@ -198,6 +198,7 @@ async function startAgentHost(): Promise<void> {
 		// If either gate fails, the provider is not registered and never appears
 		// in the agent picker (matches the pre-CDN UX exactly).
 		if (isAgentEnabled(process.env[AgentHostClaudeAgentEnabledEnvVar], true) && (!environmentService.isBuilt || agentSdkDownloader.isAvailable(ClaudeSdkPackage))) {
+			// ClaudeAgent reads the `…useClaudeSubscription` env var itself.
 			agentService.registerProvider(instantiationService.createInstance(ClaudeAgent));
 		}
 		if (isAgentEnabled(process.env[AgentHostCodexAgentEnabledEnvVar], false) && agentSdkDownloader.isAvailable(CodexSdkPackage)) {

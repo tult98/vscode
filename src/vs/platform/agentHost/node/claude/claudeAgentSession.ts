@@ -49,7 +49,14 @@ export type { IRematerializer } from './claudeSdkPipeline.js';
  * agent's per-session lookup, and the resume-vs-fresh discriminator).
  */
 export interface IMaterializeContext {
-	readonly proxyHandle: IClaudeProxyHandle;
+	/**
+	 * Copilot proxy handle the SDK routes through, or `undefined` in
+	 * subscription mode where the SDK talks to `api.anthropic.com` directly
+	 * with the user's Claude credentials. Forwarded verbatim to
+	 * {@link buildOptions}, which omits the proxy `ANTHROPIC_BASE_URL` /
+	 * `ANTHROPIC_AUTH_TOKEN` overrides when it is absent.
+	 */
+	readonly proxyHandle: IClaudeProxyHandle | undefined;
 	readonly canUseTool: NonNullable<Options['canUseTool']>;
 	readonly isResume: boolean;
 	/**

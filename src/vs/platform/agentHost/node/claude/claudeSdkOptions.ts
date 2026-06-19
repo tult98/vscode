@@ -78,15 +78,25 @@ export interface IBuildOptionsInput {
  */
 export async function buildOptions(
 	input: IBuildOptionsInput,
-	proxyHandle: IClaudeProxyHandle,
+	proxyHandle: IClaudeProxyHandle | undefined,
 	logStderr: (data: string) => void,
 	logElicitation: (msg: string) => void,
 ): Promise<Options> {
-	const subprocessEnv = buildSubprocessEnv();
+	// Subscription mode passes no proxy handle: the SDK subprocess talks to
+	// `api.anthropic.com` directly and authenticates with the user's ambient
+	// Claude credentials (keychain / `~/.claude/.credentials.json` /
+	// `CLAUDE_CODE_OAUTH_TOKEN`), so we must NOT override `ANTHROPIC_BASE_URL`
+	// and must NOT strip the Anthropic credentials from the spawn env.
+	const useSubscription = proxyHandle === undefined;
+	const subprocessEnv = buildSubprocessEnv(useSubscription);
 	const resolvedRgDiskPath = await rgDiskPath();
 	const settingsEnv: Record<string, string> = {
-		ANTHROPIC_BASE_URL: proxyHandle.baseUrl,
-		ANTHROPIC_AUTH_TOKEN: `${proxyHandle.nonce}.${input.sessionId}`,
+		...(proxyHandle
+			? {
+				ANTHROPIC_BASE_URL: proxyHandle.baseUrl,
+				ANTHROPIC_AUTH_TOKEN: `${proxyHandle.nonce}.${input.sessionId}`,
+			}
+			: {}),
 		CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
 		USE_BUILTIN_RIPGREP: '0',
 		PATH: `${dirname(resolvedRgDiskPath)}${delimiter}${process.env.PATH ?? ''}`,
@@ -162,18 +172,38 @@ export async function buildClientMcpServers(
  *
  * Mirror of CopilotAgent's strip pattern at copilotAgent.ts:434-450.
  *
+ * In **subscription mode** (`useSubscription`) the SDK authenticates directly
+ * against Anthropic, so `ANTHROPIC_API_KEY` is left untouched (passed through
+ * if the user set one) and `CLAUDE_CODE_OAUTH_TOKEN` survives via the
+ * inherited-env pass-through below — neither is a `VSCODE_*`/`ELECTRON_*` key.
+ * In Copilot-proxy mode `ANTHROPIC_API_KEY` is stripped so a stray user key
+ * can't override the proxy endpoint.
+ *
  * Exported for unit testing as a pure function over `process.env`.
  */
-export function buildSubprocessEnv(): Record<string, string | undefined> {
+export function buildSubprocessEnv(useSubscription = false): Record<string, string | undefined> {
 	const env: Record<string, string | undefined> = {
 		ELECTRON_RUN_AS_NODE: '1',
 		NODE_OPTIONS: undefined,
-		ANTHROPIC_API_KEY: undefined,
+		...(useSubscription ? {} : { ANTHROPIC_API_KEY: undefined }),
 	};
 	for (const key of Object.keys(process.env)) {
 		if (key === 'ELECTRON_RUN_AS_NODE') { continue; }
 		if (key.startsWith('VSCODE_') || key.startsWith('ELECTRON_')) {
 			env[key] = undefined;
+		}
+	}
+	if (useSubscription) {
+		// The SDK resolves credentials from the `Options.env` map we pass
+		// (`o ?? process.env` in sdk.mjs), NOT from the inherited process env —
+		// so a credential that only lives in `process.env` is invisible to its
+		// auth check and it falls back to the OS keychain ("Not logged in").
+		// Forward the direct-auth credentials explicitly so the SDK sees them.
+		for (const key of ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']) {
+			const value = process.env[key];
+			if (value !== undefined && value !== '') {
+				env[key] = value;
+			}
 		}
 	}
 	return env;

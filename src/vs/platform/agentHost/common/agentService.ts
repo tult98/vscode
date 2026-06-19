@@ -104,6 +104,26 @@ export const AgentHostClaudeAgentEnabledEnvVar = 'VSCODE_AGENT_HOST_CLAUDE_AGENT
 export const AgentHostCodexAgentEnabledEnvVar = 'VSCODE_AGENT_HOST_CODEX_AGENT_ENABLED';
 
 /**
+ * Configuration key controlling whether the agent host's Claude provider talks
+ * to Anthropic **directly using the user's Claude Pro/Max subscription** instead
+ * of routing through the GitHub Copilot proxy (CAPI). When `true`, the Claude
+ * provider declares no protected resources (so no GitHub sign-in is required),
+ * never starts the Copilot proxy, advertises a static Claude model list, and
+ * lets the Claude Agent SDK authenticate against `api.anthropic.com` using the
+ * ambient Claude Code credentials (run `claude setup-token` / `claude login`, or
+ * export `CLAUDE_CODE_OAUTH_TOKEN`). Defaults to `false` (Copilot-proxy path).
+ * The agent host process must be restarted for changes to take effect.
+ */
+export const AgentHostClaudeUseSubscriptionSettingId = 'chat.agentHost.claudeAgent.useClaudeSubscription';
+
+/**
+ * Environment variable form of {@link AgentHostClaudeUseSubscriptionSettingId}.
+ * Set by the agent host starters from the setting. Accepts `'true'` /
+ * `'false'`; absent means "default" (`false`).
+ */
+export const AgentHostClaudeUseSubscriptionEnvVar = 'VSCODE_AGENT_HOST_CLAUDE_USE_SUBSCRIPTION';
+
+/**
  * Resolves the effective enable state for a Claude/Codex provider from the
  * env-var value forwarded by the starter. Recognized values (case- and
  * whitespace-insensitive):
@@ -377,6 +397,7 @@ export interface IAgentSdkStarterSettings {
 	readonly codexHome?: string;
 	readonly codexBinaryArgs?: readonly string[];
 	readonly claudeAgentEnabled?: boolean;
+	readonly claudeUseSubscription?: boolean;
 	readonly codexAgentEnabled?: boolean;
 }
 
@@ -398,6 +419,9 @@ export function buildAgentSdkEnv(
 	}
 	if (settings.claudeAgentEnabled !== undefined) {
 		setIfMissing(AgentHostClaudeAgentEnabledEnvVar, settings.claudeAgentEnabled ? 'true' : 'false');
+	}
+	if (settings.claudeUseSubscription !== undefined) {
+		setIfMissing(AgentHostClaudeUseSubscriptionEnvVar, settings.claudeUseSubscription ? 'true' : 'false');
 	}
 	if (settings.codexAgentEnabled !== undefined) {
 		setIfMissing(AgentHostCodexAgentEnabledEnvVar, settings.codexAgentEnabled ? 'true' : 'false');

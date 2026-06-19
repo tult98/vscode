@@ -10,6 +10,7 @@ import product from '../../product/common/product.js';
 import { Registry } from '../../registry/common/platform.js';
 import {
 	AgentHostClaudeAgentEnabledSettingId,
+	AgentHostClaudeUseSubscriptionSettingId,
 	AgentHostCodexAgentBinaryArgsSettingId,
 	AgentHostCodexAgentEnabledSettingId,
 	AgentHostCodexAgentSdkRootSettingId,
@@ -53,6 +54,12 @@ configurationRegistry.registerConfiguration({
 			policyReference: {
 				name: 'Claude3PIntegration',
 			},
+		},
+		[AgentHostClaudeUseSubscriptionSettingId]: {
+			type: 'boolean',
+			markdownDescription: nls.localize('chat.agentHost.claudeAgent.useClaudeSubscription', "When enabled, the agent host's Claude provider talks to Anthropic directly using your Claude Pro/Max subscription instead of your GitHub Copilot plan. Authenticate once by running `claude setup-token` (or `claude login`), or by exporting `CLAUDE_CODE_OAUTH_TOKEN` in the environment that launches the app. No GitHub Copilot sign-in is required when this is on. Requires `#chat.agentHost.enabled#` and `#chat.agentHost.claudeAgent.enabled#`. The agent host process must be restarted for changes to take effect."),
+			default: false,
+			tags: ['experimental', 'advanced'],
 		},
 		[AgentHostCodexAgentEnabledSettingId]: {
 			type: 'boolean',

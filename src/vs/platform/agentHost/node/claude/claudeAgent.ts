@@ -23,7 +23,7 @@ import { createSchema, platformSessionSchema, schemaProperty } from '../../commo
 import { ClaudePermissionMode, ClaudeSessionConfigKey, narrowClaudePermissionMode } from '../../common/claudeSessionConfigKeys.js';
 import { createClaudeThinkingLevelSchema, isClaudeEffortLevel } from '../../common/claudeModelConfig.js';
 import { SessionConfigKey } from '../../common/sessionConfigKeys.js';
-import { AgentProvider, AgentSession, AgentSignal, GITHUB_COPILOT_PROTECTED_RESOURCE, IAgent, IAgentCreateSessionConfig, IAgentCreateSessionResult, IAgentDescriptor, IAgentMaterializeSessionEvent, IAgentModelInfo, IAgentResolveSessionConfigParams, IAgentSessionConfigCompletionsParams, IAgentSessionMetadata, IAgentSessionProjectInfo } from '../../common/agentService.js';
+import { AgentHostClaudeUseSubscriptionEnvVar, AgentProvider, AgentSession, AgentSignal, GITHUB_COPILOT_PROTECTED_RESOURCE, IAgent, IAgentCreateSessionConfig, IAgentCreateSessionResult, IAgentDescriptor, IAgentMaterializeSessionEvent, IAgentModelInfo, IAgentResolveSessionConfigParams, IAgentSessionConfigCompletionsParams, IAgentSessionMetadata, IAgentSessionProjectInfo, isAgentEnabled } from '../../common/agentService.js';
 import { ActionType } from '../../common/state/sessionActions.js';
 import type { ResolveSessionConfigResult, SessionConfigCompletionsResult } from '../../common/state/protocol/commands.js';
 import { AHP_AUTH_REQUIRED, ProtocolError } from '../../common/state/sessionProtocol.js';
@@ -107,6 +107,31 @@ function toAgentModelInfo(m: CCAModel, provider: AgentProvider): IAgentModelInfo
 		...(policyState ? { policyState } : {}),
 		...(typeof multiplier === 'number' ? { _meta: { multiplierNumeric: multiplier } } : {}),
 	};
+}
+
+/**
+ * Static Claude model catalogue advertised when the agent runs in
+ * **subscription mode** (`chat.agentHost.claudeAgent.useClaudeSubscription`).
+ * In that mode there is no GitHub token and no Copilot proxy, so we cannot
+ * enumerate models from CAPI; we publish a curated list instead. Ids are in
+ * the canonical dotted endpoint format (`ModelSelection.id`); the
+ * `toSdkModelId` seam in `buildOptions` converts them to the SDK/CLI's
+ * hyphenated form at spawn time. Keep this in sync with Anthropic's current
+ * subscription-eligible model lineup.
+ */
+function buildSubscriptionClaudeModels(provider: AgentProvider): IAgentModelInfo[] {
+	const mk = (id: string, name: string, maxContextWindow: number): IAgentModelInfo => ({
+		provider,
+		id,
+		name,
+		maxContextWindow,
+		supportsVision: true,
+	});
+	return [
+		mk('claude-sonnet-4.5', 'Claude Sonnet 4.5', 200_000),
+		mk('claude-opus-4.1', 'Claude Opus 4.1', 200_000),
+		mk('claude-haiku-4.5', 'Claude Haiku 4.5', 200_000),
+	];
 }
 
 // Single source of truth for narrowing an arbitrary runtime value to
@@ -228,6 +253,16 @@ export class ClaudeAgent extends Disposable implements IAgent {
 		return this._sessions.get(sessionId)?.session;
 	}
 
+	/**
+	 * Subscription mode (`chat.agentHost.claudeAgent.useClaudeSubscription`):
+	 * authenticate directly against Anthropic with the user's Claude Pro/Max
+	 * credentials instead of routing through the GitHub Copilot proxy. When
+	 * set, the agent declares no protected resources, never starts the proxy,
+	 * advertises {@link buildSubscriptionClaudeModels}, and the SDK subprocess
+	 * talks to `api.anthropic.com` directly (see `buildOptions`/`buildSubprocessEnv`).
+	 */
+	private readonly _useSubscription: boolean;
+
 	constructor(
 		@ILogService private readonly _logService: ILogService,
 		@ICopilotApiService private readonly _copilotApiService: ICopilotApiService,
@@ -240,7 +275,27 @@ export class ClaudeAgent extends Disposable implements IAgent {
 		@IProductService private readonly _productService: IProductService,
 	) {
 		super();
+		// Read the subscription toggle from the env var the agent host starter
+		// forwards from `chat.agentHost.claudeAgent.useClaudeSubscription`. Kept
+		// out of the constructor signature so the DI `createInstance(ClaudeAgent)`
+		// call sites (and tests) stay arg-free.
+		this._useSubscription = isAgentEnabled(process.env[AgentHostClaudeUseSubscriptionEnvVar], false);
 		this._metadataStore = _instantiationService.createInstance(ClaudeSessionMetadataStore, this.id);
+		if (this._useSubscription) {
+			// Subscription mode: no CAPI, so publish the static model catalogue
+			// up front. Auth (`authenticate`) and credit reports (proxy) never
+			// fire in this mode, so there is nothing else to wire.
+			this._logService.info('[Claude] Subscription mode enabled — using Claude Pro/Max credentials, bypassing Copilot proxy');
+			// Diagnostic: surface whether direct-auth credentials are actually
+			// visible to the agent host process (presence only, never the value).
+			// If both are false here, the token never propagated into this
+			// process's environment (e.g. launched from a shell without it).
+			const oauthTok = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+			const apiKey = process.env.ANTHROPIC_API_KEY;
+			this._logService.info(`[Claude] Direct-auth credentials visible to agent host: CLAUDE_CODE_OAUTH_TOKEN(len=${oauthTok?.length ?? 0}, prefix=${oauthTok?.slice(0, 13) ?? '-'}), ANTHROPIC_API_KEY(len=${apiKey?.length ?? 0})`);
+			this._models.set(buildSubscriptionClaudeModels(this.id), undefined);
+			return;
+		}
 		// CAPI reports each request's billed credits via the proxy (the SDK
 		// strips `copilot_usage` from its `result`). Route every report to
 		// the originating session by the session id the proxy decoded from
@@ -261,10 +316,23 @@ export class ClaudeAgent extends Disposable implements IAgent {
 	}
 
 	getProtectedResources(): ProtectedResourceMetadata[] {
-		return [GITHUB_COPILOT_PROTECTED_RESOURCE];
+		// Subscription mode authenticates directly against Anthropic with the
+		// user's Claude credentials, so there is no Copilot resource to gate
+		// on. Returning an empty list means the workbench never resolves a
+		// GitHub token for Claude and the session type is not Copilot-gated.
+		return this._useSubscription ? [] : [GITHUB_COPILOT_PROTECTED_RESOURCE];
 	}
 
-	private _ensureAuthenticated(): IClaudeProxyHandle {
+	/**
+	 * Returns the proxy handle the SDK must route through, or `undefined` in
+	 * subscription mode (the SDK talks to Anthropic directly, no proxy). In
+	 * Copilot-proxy mode an absent handle is a hard error — the caller has not
+	 * authenticated yet.
+	 */
+	private _ensureAuthenticated(): IClaudeProxyHandle | undefined {
+		if (this._useSubscription) {
+			return undefined;
+		}
 		const handle = this._proxyHandle;
 		if (!handle) {
 			throw new ProtocolError(
@@ -277,6 +345,10 @@ export class ClaudeAgent extends Disposable implements IAgent {
 	}
 
 	async authenticate(resource: string, token: string): Promise<boolean> {
+		if (this._useSubscription) {
+			// No Copilot proxy in subscription mode — nothing to authenticate.
+			return true;
+		}
 		if (resource !== GITHUB_COPILOT_PROTECTED_RESOURCE.resource) {
 			return false;
 		}
@@ -308,6 +380,11 @@ export class ClaudeAgent extends Disposable implements IAgent {
 	}
 
 	private async _refreshModels(): Promise<void> {
+		if (this._useSubscription) {
+			// Static catalogue is published once at construction; CAPI is
+			// unavailable without a GitHub token, so never overwrite it.
+			return;
+		}
 		const tokenAtStart = this._githubToken;
 		if (!tokenAtStart) {
 			this._models.set([], undefined);
