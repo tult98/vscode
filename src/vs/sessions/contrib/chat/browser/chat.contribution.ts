@@ -3,10 +3,14 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { Codicon } from '../../../../base/common/codicons.js';
 import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
 import { ServicesAccessor } from '../../../../editor/browser/editorExtensions.js';
 import { localize, localize2 } from '../../../../nls.js';
 import { Action2, registerAction2 } from '../../../../platform/actions/common/actions.js';
+import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
+import { Menus } from '../../../browser/menus.js';
+import { IsPhoneLayoutContext, SessionsTerminalModeEnabledContext, SessionsWelcomeVisibleContext } from '../../../common/contextkeys.js';
 import { ConfigurationScope, Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { registerWorkbenchContribution2, WorkbenchPhase } from '../../../../workbench/common/contributions.js';
 import { ISessionsService } from '../../../services/sessions/browser/sessionsService.js';
@@ -28,6 +32,8 @@ import { ICustomizationHarnessService } from '../../../../workbench/contrib/chat
 import { SessionsAICustomizationWorkspaceService } from './aiCustomizationWorkspaceService.js';
 import { SessionsCustomizationHarnessService } from './customizationHarnessService.js';
 import { IChatViewFactory } from '../../../services/chatView/browser/chatViewFactory.js';
+import { ISessionTerminalModeService, SessionTerminalModeService } from '../../../services/chatView/browser/sessionTerminalMode.js';
+import { ISessionTerminalService, SessionTerminalService } from '../../../services/chatView/browser/sessionTerminalService.js';
 import { ChatViewFactory } from './chatView.js';
 import { CHAT_CATEGORY } from '../../../../workbench/contrib/chat/browser/actions/chatActions.js';
 import { AccessibleViewRegistry } from '../../../../platform/accessibility/browser/accessibleViewRegistry.js';
@@ -37,7 +43,7 @@ import { WorktreeCreatedTaskDispatcher, AGENT_HOST_RUN_WORKTREE_CREATED_TASKS_SE
 import { AGENT_SESSIONS_SCOPED_INPUT_HISTORY_SETTING } from './sessionsChatHistory.js';
 import '../../sessions/browser/mobile/mobileOverlayContribution.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
-import { EditorAreaFocusContext } from '../../../../workbench/common/contextkeys.js';
+import { EditorAreaFocusContext, IsAuxiliaryWindowContext } from '../../../../workbench/common/contextkeys.js';
 import { NEW_SESSION_ACTION_ID } from '../common/constants.js';
 
 
@@ -81,6 +87,39 @@ class NewChatInSessionsWindowAction extends Action2 {
 registerAction2(NewChatInSessionsWindowAction);
 
 
+/**
+ * Global toggle that switches every eligible session's center pane between the
+ * GUI chat and an embedded native `claude` CLI terminal. Lives in the window
+ * title bar (not the per-session header) because it is a global mode.
+ */
+class ToggleSessionTerminalModeAction extends Action2 {
+
+	constructor() {
+		super({
+			id: 'agentSession.toggleTerminalMode',
+			title: localize2('toggleTerminalMode', "Use Claude CLI"),
+			icon: Codicon.terminal,
+			toggled: {
+				condition: SessionsTerminalModeEnabledContext,
+				title: localize('usingClaudeCli', "Using Claude CLI"),
+			},
+			menu: [{
+				id: Menus.TitleBarSessionMenu,
+				group: 'navigation',
+				order: 11,
+				when: ContextKeyExpr.and(IsAuxiliaryWindowContext.toNegated(), SessionsWelcomeVisibleContext.toNegated(), IsPhoneLayoutContext.negate()),
+			}]
+		});
+	}
+
+	override run(accessor: ServicesAccessor): void {
+		accessor.get(ISessionTerminalModeService).toggle();
+	}
+}
+
+registerAction2(ToggleSessionTerminalModeAction);
+
+
 // register actions
 registerAction2(BranchChatSessionAction);
 
@@ -97,6 +136,8 @@ registerSingleton(ISessionsTasksService, SessionsTasksService, InstantiationType
 registerSingleton(IAICustomizationWorkspaceService, SessionsAICustomizationWorkspaceService, InstantiationType.Delayed);
 registerSingleton(ICustomizationHarnessService, SessionsCustomizationHarnessService, InstantiationType.Delayed);
 registerSingleton(IChatViewFactory, ChatViewFactory, InstantiationType.Delayed);
+registerSingleton(ISessionTerminalModeService, SessionTerminalModeService, InstantiationType.Delayed);
+registerSingleton(ISessionTerminalService, SessionTerminalService, InstantiationType.Delayed);
 
 // register accessibility help
 AccessibleViewRegistry.register(new SessionsChatAccessibilityHelp());

@@ -124,6 +124,14 @@ export const AgentHostClaudeUseSubscriptionSettingId = 'chat.agentHost.claudeAge
 export const AgentHostClaudeUseSubscriptionEnvVar = 'VSCODE_AGENT_HOST_CLAUDE_USE_SUBSCRIPTION';
 
 /**
+ * Setting id for the native `claude` CLI executable used by the Agents Window's
+ * terminal mode (the embedded terminal that runs `claude --resume <id>` instead
+ * of the GUI chat). Resolved on the renderer side, not by the agent host
+ * process. Defaults to `'claude'` (resolved on PATH).
+ */
+export const AgentHostClaudeExecutablePathSettingId = 'chat.agentHost.claudeAgent.executablePath';
+
+/**
  * Resolves the effective enable state for a Claude/Codex provider from the
  * env-var value forwarded by the starter. Recognized values (case- and
  * whitespace-insensitive):
