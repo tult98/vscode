@@ -221,6 +221,10 @@ export class EditorRemoteAgentHostServiceClient extends Disposable implements IA
 		return this._requireClient().disposeSession(session);
 	}
 
+	warmSession(session: URI): Promise<void> {
+		return this._requireClient().warmSession(session);
+	}
+
 	createChat(session: URI, chat: URI, options?: IAgentCreateChatOptions): Promise<void> {
 		return this._requireClient().createChat(session, chat, options);
 	}

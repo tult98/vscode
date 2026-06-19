@@ -118,6 +118,7 @@ class MockAgentService implements IAgentService {
 	async completions(_params: CompletionsParams): Promise<CompletionsResult> { return { items: [] }; }
 	async getCompletionTriggerCharacters(): Promise<readonly string[]> { return []; }
 	async disposeSession(_session: URI): Promise<void> { }
+	async warmSession(_session: URI): Promise<void> { }
 	readonly createdChats: { session: string; chat: string }[] = [];
 	readonly disposedChats: { session: string; chat: string }[] = [];
 	async createChat(session: URI, chat: URI): Promise<void> {
