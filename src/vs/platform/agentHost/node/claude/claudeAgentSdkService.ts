@@ -11,7 +11,8 @@ import { join } from '../../../../base/common/path.js';
 import { createDecorator } from '../../../instantiation/common/instantiation.js';
 import { ILogService } from '../../../log/common/log.js';
 import { IAgentSdkDownloader, IAgentSdkPackage } from '../agentSdkDownloader.js';
-import { AgentHostClaudeSdkRootEnvVar } from '../../common/agentService.js';
+import { AgentHostClaudeExecutablePathEnvVar, AgentHostClaudeSdkRootEnvVar, AgentHostClaudeUseCliEnvVar, isAgentEnabled } from '../../common/agentService.js';
+import { createClaudeCliWarmQuery } from './claudeCliQuery.js';
 
 /**
  * `@anthropic-ai/claude-agent-sdk` distribution descriptor. Lives in this
@@ -129,6 +130,15 @@ export class ClaudeAgentSdkService implements IClaudeAgentSdkService {
 	}
 
 	async startup(params: { options: Options; initializeTimeoutMs?: number }): Promise<WarmQuery> {
+		// CLI transport: spawn the user's installed `claude` binary instead of
+		// the in-process SDK. The binary reads the user's keychain login, so the
+		// GUI authenticates with no `CLAUDE_CODE_OAUTH_TOKEN`. Everything above
+		// the transport (pipeline, event mapper, protocol) is unchanged.
+		if (isAgentEnabled(process.env[AgentHostClaudeUseCliEnvVar], false)) {
+			const executablePath = process.env[AgentHostClaudeExecutablePathEnvVar] || 'claude';
+			this._logService.info(`[Claude CLI] startup via CLI transport (executable=${executablePath})`);
+			return createClaudeCliWarmQuery(params.options, executablePath, this._logService);
+		}
 		const sdk = await this._getSdk();
 		return sdk.startup(params);
 	}

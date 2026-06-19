@@ -11,6 +11,7 @@ import { Registry } from '../../registry/common/platform.js';
 import {
 	AgentHostClaudeAgentEnabledSettingId,
 	AgentHostClaudeExecutablePathSettingId,
+	AgentHostClaudeUseCliSettingId,
 	AgentHostClaudeUseSubscriptionSettingId,
 	AgentHostCodexAgentBinaryArgsSettingId,
 	AgentHostCodexAgentEnabledSettingId,
@@ -62,9 +63,15 @@ configurationRegistry.registerConfiguration({
 			default: false,
 			tags: ['experimental', 'advanced'],
 		},
+		[AgentHostClaudeUseCliSettingId]: {
+			type: 'boolean',
+			markdownDescription: nls.localize('chat.agentHost.claudeAgent.useCli', "When enabled, the agent host's Claude provider drives the GUI chat by spawning your installed `claude` CLI (headless stream-json) instead of the in-process Claude Agent SDK. The CLI authenticates from your existing `claude login` (keychain / `~/.claude/.credentials.json`), so no `CLAUDE_CODE_OAUTH_TOKEN` is required. Implies subscription mode (no GitHub Copilot sign-in). Set `#chat.agentHost.claudeAgent.executablePath#` if `claude` is not on the agent host's `PATH`. Requires `#chat.agentHost.enabled#` and `#chat.agentHost.claudeAgent.enabled#`. The agent host process must be restarted for changes to take effect."),
+			default: false,
+			tags: ['experimental', 'advanced'],
+		},
 		[AgentHostClaudeExecutablePathSettingId]: {
 			type: 'string',
-			markdownDescription: nls.localize('chat.agentHost.claudeAgent.executablePath', "Path to the native `claude` CLI used by terminal mode in the Agents Window (the embedded terminal that runs `claude --resume` in place of the GUI chat). Defaults to `claude`, resolved on your `PATH`."),
+			markdownDescription: nls.localize('chat.agentHost.claudeAgent.executablePath', "Path to the native `claude` CLI used by terminal mode in the Agents Window (the embedded terminal that runs `claude --resume` in place of the GUI chat) and by the CLI transport when `#chat.agentHost.claudeAgent.useCli#` is enabled. Defaults to `claude`, resolved on your `PATH`."),
 			default: 'claude',
 			tags: ['experimental', 'advanced'],
 		},

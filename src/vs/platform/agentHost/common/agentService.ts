@@ -124,12 +124,40 @@ export const AgentHostClaudeUseSubscriptionSettingId = 'chat.agentHost.claudeAge
 export const AgentHostClaudeUseSubscriptionEnvVar = 'VSCODE_AGENT_HOST_CLAUDE_USE_SUBSCRIPTION';
 
 /**
+ * Configuration key controlling whether the agent host's Claude provider drives
+ * responses by spawning the user's installed `claude` CLI binary (headless
+ * stream-json transport) instead of the in-process Claude Agent SDK. When
+ * `true`, the GUI authenticates from the user's existing `claude login`
+ * (keychain / `~/.claude/.credentials.json`) with no `CLAUDE_CODE_OAUTH_TOKEN`
+ * required — the standalone binary can read the keychain where the Electron
+ * utility process cannot. Implies subscription mode (no Copilot proxy, no
+ * GitHub sign-in, static model catalogue). Defaults to `false`. The agent host
+ * process must be restarted for changes to take effect.
+ */
+export const AgentHostClaudeUseCliSettingId = 'chat.agentHost.claudeAgent.useCli';
+
+/**
+ * Environment variable form of {@link AgentHostClaudeUseCliSettingId}. Set by
+ * the agent host starters from the setting. Accepts `'true'` / `'false'`;
+ * absent means "default" (`false`).
+ */
+export const AgentHostClaudeUseCliEnvVar = 'VSCODE_AGENT_HOST_CLAUDE_USE_CLI';
+
+/**
  * Setting id for the native `claude` CLI executable used by the Agents Window's
  * terminal mode (the embedded terminal that runs `claude --resume <id>` instead
- * of the GUI chat). Resolved on the renderer side, not by the agent host
- * process. Defaults to `'claude'` (resolved on PATH).
+ * of the GUI chat) AND, when {@link AgentHostClaudeUseCliSettingId} is on, the
+ * binary the agent host spawns for the CLI transport. Defaults to `'claude'`
+ * (resolved on PATH).
  */
 export const AgentHostClaudeExecutablePathSettingId = 'chat.agentHost.claudeAgent.executablePath';
+
+/**
+ * Environment variable form of {@link AgentHostClaudeExecutablePathSettingId},
+ * forwarded by the agent host starters so the CLI transport can resolve the
+ * binary inside the agent host process.
+ */
+export const AgentHostClaudeExecutablePathEnvVar = 'VSCODE_AGENT_HOST_CLAUDE_EXECUTABLE_PATH';
 
 /**
  * Resolves the effective enable state for a Claude/Codex provider from the
@@ -406,6 +434,8 @@ export interface IAgentSdkStarterSettings {
 	readonly codexBinaryArgs?: readonly string[];
 	readonly claudeAgentEnabled?: boolean;
 	readonly claudeUseSubscription?: boolean;
+	readonly claudeUseCli?: boolean;
+	readonly claudeExecutablePath?: string;
 	readonly codexAgentEnabled?: boolean;
 }
 
@@ -431,6 +461,10 @@ export function buildAgentSdkEnv(
 	if (settings.claudeUseSubscription !== undefined) {
 		setIfMissing(AgentHostClaudeUseSubscriptionEnvVar, settings.claudeUseSubscription ? 'true' : 'false');
 	}
+	if (settings.claudeUseCli !== undefined) {
+		setIfMissing(AgentHostClaudeUseCliEnvVar, settings.claudeUseCli ? 'true' : 'false');
+	}
+	setIfMissing(AgentHostClaudeExecutablePathEnvVar, settings.claudeExecutablePath);
 	if (settings.codexAgentEnabled !== undefined) {
 		setIfMissing(AgentHostCodexAgentEnabledEnvVar, settings.codexAgentEnabled ? 'true' : 'false');
 	}
@@ -696,6 +730,13 @@ export interface IAgentModelInfo {
 	readonly provider: AgentProvider;
 	readonly id: string;
 	readonly name: string;
+	/**
+	 * Optional secondary description shown beneath the name in model pickers
+	 * (e.g. the Claude CLI's `"Sonnet 4.6 · Efficient for routine tasks"`,
+	 * where the version lives). Surfaced to clients as
+	 * `ILanguageModelChatMetadata.detail`.
+	 */
+	readonly description?: string;
 	readonly maxContextWindow?: number;
 	readonly supportsVision: boolean;
 	readonly configSchema?: ConfigSchema;

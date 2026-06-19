@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import type Anthropic from '@anthropic-ai/sdk';
-import type { GetSessionMessagesOptions, McpSdkServerConfigWithInstance, Options, PermissionMode, Query, SDKMessage, SDKSessionInfo, SDKUserMessage, SdkMcpToolDefinition, SessionMessage, Settings, WarmQuery } from '@anthropic-ai/claude-agent-sdk';
+import type { GetSessionMessagesOptions, McpSdkServerConfigWithInstance, ModelInfo, Options, PermissionMode, Query, SDKMessage, SDKSessionInfo, SDKUserMessage, SdkMcpToolDefinition, SessionMessage, Settings, WarmQuery } from '@anthropic-ai/claude-agent-sdk';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { CCAModel } from '@vscode/copilot-api';
 
@@ -35,7 +35,7 @@ import { IInstantiationService } from '../../../instantiation/common/instantiati
 import { ILogService, NullLogService } from '../../../log/common/log.js';
 import { IProductService } from '../../../product/common/productService.js';
 import { FileService } from '../../../files/common/fileService.js';
-import { IAgentMaterializeSessionEvent, AgentSession, AgentSignal, GITHUB_COPILOT_PROTECTED_RESOURCE } from '../../common/agentService.js';
+import { IAgentMaterializeSessionEvent, AgentHostClaudeUseSubscriptionEnvVar, AgentSession, AgentSignal, GITHUB_COPILOT_PROTECTED_RESOURCE } from '../../common/agentService.js';
 import { AgentFeedbackAttachmentDisplayKind } from '../../common/agentFeedbackAttachments.js';
 import { ActionType } from '../../common/state/sessionActions.js';
 import { CustomizationLoadStatus, CustomizationType, MessageAttachmentKind, MessageKind, ResponsePartKind, ChatInputResponseKind, SessionStatus, ToolResultContentType, buildSubagentSessionUri, customizationId, type ClientPluginCustomization, type PluginCustomization } from '../../common/state/sessionState.js';
@@ -176,6 +176,14 @@ class FakeClaudeAgentSdkService implements IClaudeAgentSdkService {
 	 * never expect a `result` (e.g. cancellation paths).
 	 */
 	nextQueryMessages: SDKMessage[] = [];
+
+	/**
+	 * Models the {@link FakeQuery}'s `supportedModels()` returns — i.e. what the
+	 * running instance's `initialize` handshake would report. Left undefined by
+	 * default so the unmodeled-control guard still fires for tests that don't
+	 * stage discovery.
+	 */
+	supportedModelsResult: ModelInfo[] | undefined;
 
 	/**
 	 * Optional async hook invoked between yielded messages. Tests use it
@@ -463,7 +471,12 @@ class FakeQuery implements AsyncGenerator<SDKMessage, void> {
 	supportedCommands(): never {
 		return Promise.resolve([]) as never;
 	}
-	supportedModels(): never { throw new Error('FakeQuery: supportedModels not modeled'); }
+	supportedModels(): Promise<ModelInfo[]> {
+		if (!this._sdk.supportedModelsResult) {
+			throw new Error('FakeQuery: supportedModels not modeled');
+		}
+		return Promise.resolve(this._sdk.supportedModelsResult);
+	}
 	supportedAgents(): never { throw new Error('FakeQuery: supportedAgents not modeled'); }
 	mcpServerStatus(): never { throw new Error('FakeQuery: mcpServerStatus not modeled'); }
 	getContextUsage(): never { throw new Error('FakeQuery: getContextUsage not modeled'); }
@@ -661,6 +674,17 @@ function createTestContext(
 /** Drains the microtask queue so awaited refresh writes settle. */
 function tick(): Promise<void> {
 	return new Promise(resolve => setImmediate(resolve));
+}
+
+/** Polls until `cond()` is true or the timeout elapses (for fire-and-forget async like the startup probe). */
+async function waitUntil(cond: () => boolean, timeoutMs = 3000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (!cond()) {
+		if (Date.now() > deadline) {
+			throw new Error('waitUntil: condition not met before timeout');
+		}
+		await new Promise(resolve => setTimeout(resolve, 5));
+	}
 }
 
 /**
@@ -1335,6 +1359,91 @@ suite('ClaudeAgent', () => {
 			startupOptionsCwd: URI.file('/work').fsPath,
 			startupOptionsSessionId: sessionId,
 		});
+	});
+
+	suite('subscription-mode model discovery', () => {
+		/** Run `body` with the subscription env var forced on, restoring it after. */
+		async function withSubscriptionMode(body: () => Promise<void>): Promise<void> {
+			const prev = process.env[AgentHostClaudeUseSubscriptionEnvVar];
+			process.env[AgentHostClaudeUseSubscriptionEnvVar] = '1';
+			try {
+				await body();
+			} finally {
+				if (prev === undefined) {
+					delete process.env[AgentHostClaudeUseSubscriptionEnvVar];
+				} else {
+					process.env[AgentHostClaudeUseSubscriptionEnvVar] = prev;
+				}
+			}
+		}
+
+		const SDK_MODELS: ModelInfo[] = [
+			{ value: 'claude-opus-4-5', displayName: 'Claude Opus 4.5', description: 'flagship', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high'] },
+			{ value: 'claude-haiku-4-5', displayName: 'Claude Haiku 4.5', description: 'fast' },
+		];
+
+		test('startup probe publishes the instance models before any message is sent', () => withSubscriptionMode(async () => {
+			const { agent, sdk } = createTestContext(disposables);
+			// The probe fires from the constructor but parks on async option
+			// building, so setting the result on the next line lands before it
+			// reads `supportedModels()`. No createSession / sendMessage here —
+			// the picker must populate eagerly.
+			sdk.supportedModelsResult = SDK_MODELS;
+
+			await waitUntil(() => agent.models.get().length === SDK_MODELS.length);
+
+			assert.deepStrictEqual(
+				agent.models.get().map(m => ({ id: m.id, name: m.name, description: m.description })),
+				[
+					{ id: 'claude-opus-4.5', name: 'Claude Opus 4.5', description: 'flagship' },
+					{ id: 'claude-haiku-4.5', name: 'Claude Haiku 4.5', description: 'fast' },
+				],
+			);
+		}));
+
+		test('first materialized session replaces the seed catalogue with the instance-reported models', () => withSubscriptionMode(async () => {
+			const { agent, sdk } = createTestContext(disposables);
+
+			// Seed catalogue published at construction, before any session exists.
+			assert.strictEqual(agent.models.get().length, 3, 'subscription mode seeds the static catalogue');
+
+			const created = await agent.createSession({ workingDirectory: URI.file('/work') });
+			const sessionId = AgentSession.id(created.session);
+			sdk.supportedModelsResult = SDK_MODELS;
+			sdk.nextQueryMessages = [makeSystemInitMessage(sessionId), makeResultSuccess(sessionId)];
+
+			await agent.sendMessage(created.session, 'hi', undefined, 'turn-1');
+			await tick();
+			await tick();
+
+			assert.deepStrictEqual(
+				agent.models.get().map(m => ({ id: m.id, name: m.name, description: m.description, supportsVision: m.supportsVision, hasConfigSchema: m.configSchema !== undefined })),
+				[
+					// SDK hyphenated ids normalized to the dotted endpoint id; the alias
+					// `displayName` becomes the name and the versioned `description` is
+					// threaded through; the model with effort levels gains a
+					// thinking-level configSchema.
+					{ id: 'claude-opus-4.5', name: 'Claude Opus 4.5', description: 'flagship', supportsVision: true, hasConfigSchema: true },
+					{ id: 'claude-haiku-4.5', name: 'Claude Haiku 4.5', description: 'fast', supportsVision: true, hasConfigSchema: false },
+				],
+			);
+		}));
+
+		test('an empty discovery result leaves the seed catalogue in place', () => withSubscriptionMode(async () => {
+			const { agent, sdk } = createTestContext(disposables);
+			const seed = agent.models.get();
+
+			const created = await agent.createSession({ workingDirectory: URI.file('/work') });
+			const sessionId = AgentSession.id(created.session);
+			sdk.supportedModelsResult = [];
+			sdk.nextQueryMessages = [makeSystemInitMessage(sessionId), makeResultSuccess(sessionId)];
+
+			await agent.sendMessage(created.session, 'hi', undefined, 'turn-1');
+			await tick();
+			await tick();
+
+			assert.deepStrictEqual(agent.models.get(), seed, 'seed catalogue retained when discovery yields nothing');
+		}));
 	});
 
 	test('materialize event payload shape — { session, workingDirectory, project: undefined }', async () => {

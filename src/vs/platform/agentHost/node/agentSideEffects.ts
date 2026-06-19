@@ -174,6 +174,7 @@ export class AgentSideEffects extends Disposable {
 					id: m.id,
 					provider: m.provider,
 					name: m.name,
+					description: m.description,
 					maxContextWindow: m.maxContextWindow,
 					supportsVision: m.supportsVision,
 					policyState: m.policyState,
