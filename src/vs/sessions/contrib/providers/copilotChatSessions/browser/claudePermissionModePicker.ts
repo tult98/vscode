@@ -22,18 +22,18 @@ import { CopilotChatSessionsProvider } from './copilotChatSessionsProvider.js';
 import { reportNewChatPickerClosed } from '../../../chat/browser/newChatPickerTelemetry.js';
 import { IChatSessionsService } from '../../../../../workbench/contrib/chat/common/chatSessionsService.js';
 
-const PERMISSION_MODE_OPTION_ID = 'permissionMode';
-const ALLOW_AUTO_PERMISSIONS_SETTING = 'github.copilot.chat.claudeAgent.allowAutoPermissions';
-const ALLOW_BYPASS_PERMISSIONS_SETTING = 'github.copilot.chat.claudeAgent.allowDangerouslySkipPermissions';
+export const PERMISSION_MODE_OPTION_ID = 'permissionMode';
+export const ALLOW_AUTO_PERMISSIONS_SETTING = 'github.copilot.chat.claudeAgent.allowAutoPermissions';
+export const ALLOW_BYPASS_PERMISSIONS_SETTING = 'github.copilot.chat.claudeAgent.allowDangerouslySkipPermissions';
 
-interface IClaudePermissionModeItem {
+export interface IClaudePermissionModeItem {
 	readonly id: string;
 	readonly label: string;
 	readonly description: string;
 	readonly icon: ThemeIcon;
 }
 
-const permissionModes: IClaudePermissionModeItem[] = [
+export const permissionModes: IClaudePermissionModeItem[] = [
 	{
 		id: 'default',
 		label: localize('claude.permissionMode.default', "Ask Before Edits"),
@@ -54,14 +54,14 @@ const permissionModes: IClaudePermissionModeItem[] = [
 	},
 ];
 
-const autoPermissionMode: IClaudePermissionModeItem = {
+export const autoPermissionMode: IClaudePermissionModeItem = {
 	id: 'auto',
 	label: localize('claude.permissionMode.auto', "Auto"),
 	description: localize('claude.permissionMode.auto.description', "A model classifier approves or denies tool operations automatically"),
 	icon: Codicon.sparkle,
 };
 
-const bypassPermissionMode: IClaudePermissionModeItem = {
+export const bypassPermissionMode: IClaudePermissionModeItem = {
 	id: 'bypassPermissions',
 	label: localize('claude.permissionMode.bypass', "Bypass Permissions"),
 	description: localize('claude.permissionMode.bypass.description', "All tools run without any confirmation"),
