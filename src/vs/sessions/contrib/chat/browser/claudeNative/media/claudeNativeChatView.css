@@ -34,6 +34,13 @@
 	box-sizing: border-box;
 }
 
+/* Composer host — pinned below the transcript, does not scroll. */
+.chat-view.chat-view-claude-native .claude-native-composer-host {
+	flex: 0 0 auto;
+	box-sizing: border-box;
+	padding: 8px 16px 16px;
+}
+
 .chat-view.chat-view-claude-native .claude-native-empty {
 	margin: auto;
 	padding: 0 24px;

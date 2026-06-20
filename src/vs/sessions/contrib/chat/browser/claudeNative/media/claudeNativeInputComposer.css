@@ -1,0 +1,480 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * Claude-parity native input composer — "Option A · Status strip footer".
+ * A rounded card: optional alert banner → input → controls row (add · model+effort ·
+ * permission mode · send) → quiet status-strip footer (workspace · branch + dirty ·
+ * diff stat · file · model & context window · context %).
+ *
+ * Layout/spacing follow the Claude Design mock, tightened for the narrow Agents Window
+ * panel; colors map to the active VS Code theme (the mock is the dark-theme reference).
+ * Color is used only where it carries meaning — the diff, the dirty dot, the context
+ * ring, and the warning banner. Everything else is muted (descriptionForeground). All
+ * selectors are scoped to `.claude-native-composer`.
+ */
+
+.claude-native-composer {
+	display: flex;
+	flex-direction: column;
+	box-sizing: border-box;
+	background: var(--vscode-input-background);
+	border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, transparent));
+	border-radius: var(--vscode-cornerRadius-large, 12px);
+	color: var(--vscode-foreground);
+}
+
+/* --- Alert banner (top) --- */
+
+.claude-native-composer .claude-native-composer-alert {
+	display: none;
+	align-items: center;
+	gap: 8px;
+	padding: 5px 14px;
+	font-size: 11.5px;
+	background: var(--vscode-inputValidation-warningBackground);
+	border-bottom: 1px solid var(--vscode-inputValidation-warningBorder, transparent);
+	border-radius: var(--vscode-cornerRadius-large, 12px) var(--vscode-cornerRadius-large, 12px) 0 0;
+	color: var(--vscode-inputValidation-warningForeground, var(--vscode-foreground));
+}
+
+.claude-native-composer .claude-native-composer-alert.visible {
+	display: flex;
+}
+
+.claude-native-composer .claude-native-composer-alert-icon {
+	flex: none;
+	color: var(--vscode-notificationsWarningIcon-foreground, var(--vscode-editorWarning-foreground));
+}
+
+.claude-native-composer .claude-native-composer-alert-message {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.claude-native-composer .claude-native-composer-alert-action {
+	flex: none;
+	cursor: pointer;
+	text-decoration: underline;
+	text-underline-offset: 2px;
+	color: var(--vscode-foreground);
+}
+
+.claude-native-composer .claude-native-composer-alert-close {
+	margin-left: auto;
+	flex: none;
+	cursor: pointer;
+	font-size: 14px;
+	line-height: 1;
+	color: var(--vscode-descriptionForeground);
+}
+
+.claude-native-composer .claude-native-composer-alert-close:hover {
+	color: var(--vscode-foreground);
+}
+
+/* --- Body (attachments + input + controls) --- */
+
+.claude-native-composer .claude-native-composer-body {
+	display: flex;
+	flex-direction: column;
+}
+
+.claude-native-composer .claude-native-composer-attachments:not(:empty) {
+	padding: 9px 14px 0;
+}
+
+.claude-native-composer .claude-native-composer-input {
+	padding: 9px 14px 2px;
+}
+
+.claude-native-composer .claude-native-composer-editor {
+	width: 100%;
+}
+
+/* --- Controls row --- */
+
+.claude-native-composer .claude-native-composer-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 9px 7px;
+	position: relative;
+}
+
+.claude-native-composer .claude-native-composer-toolbar-spacer {
+	flex: 1 1 auto;
+}
+
+/* A clickable chip — square (icon-only) or pill (label) */
+.claude-native-composer .claude-native-composer-chip {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 27px;
+	padding: 0 9px;
+	border-radius: var(--vscode-cornerRadius-medium);
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+	user-select: none;
+	white-space: nowrap;
+	min-width: 0;
+}
+
+.claude-native-composer .claude-native-composer-chip.icon-only {
+	width: 27px;
+	padding: 0;
+	justify-content: center;
+	flex: none;
+}
+
+.claude-native-composer .claude-native-composer-chip:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.claude-native-composer .claude-native-composer-chip-wrap {
+	position: relative;
+	display: flex;
+	min-width: 0;
+}
+
+.claude-native-composer .claude-native-composer-chip-label {
+	font-size: 13px;
+	font-weight: 500;
+	color: var(--vscode-foreground);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Small subtle pill (e.g. thinking-effort on the model chip) */
+.claude-native-composer .claude-native-composer-chip-badge {
+	flex: none;
+	font-size: 10.5px;
+	color: var(--vscode-descriptionForeground);
+	background: var(--vscode-toolbar-hoverBackground);
+	border-radius: 5px;
+	padding: 1px 5px;
+}
+
+.claude-native-composer .claude-native-composer-chip-chevron {
+	flex: none;
+	color: var(--vscode-descriptionForeground);
+}
+
+/* The permission-mode chip tints to the warning color while in "bypass". */
+.claude-native-composer .claude-native-composer-chip.mode-bypass,
+.claude-native-composer .claude-native-composer-chip.mode-bypass .claude-native-composer-chip-label {
+	color: var(--vscode-notificationsWarningIcon-foreground, var(--vscode-editorWarning-foreground));
+}
+
+/* Bash-mode affordance (input starts with `!`) */
+.claude-native-composer .claude-native-composer-bash-hint {
+	display: none;
+	align-items: center;
+	gap: 6px;
+	height: 27px;
+	padding: 0 9px;
+	border-radius: var(--vscode-cornerRadius-medium);
+	font-size: 13px;
+	color: var(--vscode-descriptionForeground);
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.claude-native-composer .claude-native-composer-bash-hint.visible {
+	display: flex;
+}
+
+/* Send / stop button */
+.claude-native-composer .claude-native-composer-send {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	border-radius: 8px;
+	background: var(--vscode-toolbar-hoverBackground);
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+	flex: none;
+}
+
+.claude-native-composer .claude-native-composer-send:hover:not(.disabled) {
+	background: var(--vscode-button-background);
+	color: var(--vscode-button-foreground);
+}
+
+.claude-native-composer .claude-native-composer-send.disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+/* --- Dropdown menus --- */
+
+/* Full-screen transparent catcher that closes the open menu on outside click. */
+.claude-native-composer .claude-native-composer-menu-catcher {
+	position: fixed;
+	inset: 0;
+	z-index: 40;
+}
+
+.claude-native-composer .claude-native-composer-menu {
+	position: absolute;
+	bottom: calc(100% + 6px);
+	left: 0;
+	z-index: 50;
+	min-width: 200px;
+	max-width: calc(100vw - 24px);
+	padding: 5px;
+	background: var(--vscode-menu-background, var(--vscode-dropdown-background));
+	border: 1px solid var(--vscode-menu-border, var(--vscode-dropdown-border, transparent));
+	border-radius: 9px;
+	box-shadow: 0 8px 24px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+	color: var(--vscode-menu-foreground, var(--vscode-foreground));
+}
+
+/* The permission-mode menu carries descriptions, so it is a touch wider. */
+.claude-native-composer .claude-native-composer-menu.mode-menu {
+	width: 290px;
+	border-radius: 10px;
+}
+
+.claude-native-composer .claude-native-composer-menu-label {
+	font-size: 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--vscode-descriptionForeground);
+	padding: 6px 8px 4px;
+}
+
+.claude-native-composer .claude-native-composer-menu-sep {
+	height: 1px;
+	background: var(--vscode-menu-separatorBackground, var(--vscode-input-border, transparent));
+	margin: 4px 6px;
+}
+
+.claude-native-composer .claude-native-composer-menu-item {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	padding: 6px 8px;
+	border-radius: 6px;
+	font-size: 12.5px;
+	color: var(--vscode-menu-foreground, var(--vscode-foreground));
+	cursor: pointer;
+}
+
+.claude-native-composer .claude-native-composer-menu-item:hover {
+	background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground));
+	color: var(--vscode-menu-selectionForeground, var(--vscode-menu-foreground));
+}
+
+.claude-native-composer .claude-native-composer-menu-item.selected {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.claude-native-composer .claude-native-composer-menu-item-icon {
+	flex: none;
+	display: flex;
+	color: var(--vscode-descriptionForeground);
+}
+
+.claude-native-composer .claude-native-composer-menu-item-note {
+	margin-left: auto;
+	font-size: 10.5px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.claude-native-composer .claude-native-composer-menu-item-check {
+	margin-left: auto;
+	color: var(--vscode-foreground);
+}
+
+/* Mode rows: leading icon + title/description block */
+.claude-native-composer .claude-native-composer-mode-row {
+	display: flex;
+	gap: 9px;
+	padding: 7px 8px;
+	border-radius: 7px;
+	cursor: pointer;
+}
+
+.claude-native-composer .claude-native-composer-mode-row:hover,
+.claude-native-composer .claude-native-composer-mode-row.selected {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.claude-native-composer .claude-native-composer-mode-row-icon {
+	width: 18px;
+	flex: none;
+	display: flex;
+	justify-content: center;
+	padding-top: 1px;
+	color: var(--vscode-foreground);
+}
+
+.claude-native-composer .claude-native-composer-mode-row-body {
+	flex: 1;
+	min-width: 0;
+}
+
+.claude-native-composer .claude-native-composer-mode-row-title {
+	display: flex;
+	align-items: center;
+	font-size: 12.5px;
+	font-weight: 500;
+	color: var(--vscode-foreground);
+}
+
+.claude-native-composer .claude-native-composer-mode-row-check {
+	margin-left: auto;
+}
+
+.claude-native-composer .claude-native-composer-mode-row-desc {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	margin-top: 2px;
+	line-height: 1.4;
+}
+
+.claude-native-composer .claude-native-composer-mode-menu-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 5px 6px 6px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.claude-native-composer .claude-native-composer-mode-menu-hint {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	white-space: nowrap;
+}
+
+.claude-native-composer .claude-native-composer-kbd {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 16px;
+	height: 16px;
+	padding: 0 4px;
+	border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, transparent));
+	border-radius: 4px;
+	color: var(--vscode-foreground);
+}
+
+/* --- Status strip footer --- */
+
+.claude-native-composer .claude-native-composer-status {
+	display: flex;
+	align-items: center;
+	padding: 4px 12px;
+	background: var(--vscode-toolbar-hoverBackground);
+	border-top: 1px solid var(--vscode-input-border, var(--vscode-widget-border, transparent));
+	border-radius: 0 0 var(--vscode-cornerRadius-large, 12px) var(--vscode-cornerRadius-large, 12px);
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	overflow: hidden;
+}
+
+.claude-native-composer .claude-native-composer-status-group {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	min-width: 0;
+}
+
+.claude-native-composer .claude-native-composer-status-group.bright {
+	color: var(--vscode-foreground);
+}
+
+.claude-native-composer .claude-native-composer-status-group.right {
+	margin-left: auto;
+	gap: 10px;
+	flex: none;
+	padding-left: 8px;
+}
+
+.claude-native-composer .claude-native-composer-status-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.claude-native-composer .claude-native-composer-status-mono {
+	font-family: var(--monaco-monospace-font);
+}
+
+.claude-native-composer .claude-native-composer-status-divider {
+	flex: none;
+	width: 1px;
+	height: 12px;
+	/* input-border is often defined-but-transparent in dark themes, so derive a
+	 * always-visible faint line from the foreground instead. */
+	background-color: var(--vscode-foreground);
+	opacity: 0.18;
+	margin: 0 12px;
+}
+
+.claude-native-composer .claude-native-composer-status-icon {
+	flex: none;
+	display: flex;
+}
+
+.claude-native-composer .claude-native-composer-diff {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin-left: 8px;
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+}
+
+.claude-native-composer .claude-native-composer-diff-added {
+	color: var(--vscode-charts-green);
+}
+
+.claude-native-composer .claude-native-composer-diff-removed {
+	color: var(--vscode-charts-red);
+}
+
+.claude-native-composer .claude-native-composer-dirty-dot {
+	flex: none;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--vscode-gitDecoration-modifiedResourceForeground, var(--vscode-charts-yellow));
+}
+
+.claude-native-composer .claude-native-composer-context {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	flex: none;
+}
+
+.claude-native-composer .claude-native-composer-context-value {
+	color: var(--vscode-foreground);
+}
+
+/* Context-window usage ring — a conic-gradient with a radial mask. The filled
+ * fraction and its threshold color are applied inline (see _renderStatusStrip). */
+.claude-native-composer .claude-native-composer-context-ring {
+	flex: none;
+	width: 14px;
+	height: 14px;
+	border-radius: 50%;
+	-webkit-mask: radial-gradient(closest-side, transparent 60%, #000 62%);
+	mask: radial-gradient(closest-side, transparent 60%, #000 62%);
+}

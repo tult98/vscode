@@ -18,6 +18,7 @@ import { ChatViewModel, isRequestVM, isResponseVM } from '../../../../../workben
 import { AbstractChatView, ChatViewKind } from '../../../../browser/parts/chatView.js';
 import { IChat } from '../../../../services/sessions/common/session.js';
 import { IActiveSession } from '../../../../services/sessions/common/sessionsManagement.js';
+import { ClaudeNativeInputComposer } from './claudeNativeInputComposer.js';
 import { ClaudeTranscriptRenderer } from './claudeTranscriptRenderer.js';
 
 /** Per-turn DOM + lifetime, keyed by the view-model item id. */
@@ -50,6 +51,9 @@ export class ClaudeNativeChatView extends AbstractChatView {
 	private readonly _emptyState: HTMLElement;
 
 	private readonly _renderer: ClaudeTranscriptRenderer;
+
+	/** Follow-up input composer pinned below the transcript. */
+	private readonly _composer: ClaudeNativeInputComposer;
 
 	/** Reference to the loaded chat model; disposing releases the model. */
 	private readonly _modelRef = this._register(new MutableDisposable<IChatModelReference>());
@@ -94,6 +98,11 @@ export class ClaudeNativeChatView extends AbstractChatView {
 		this._register(dom.addDisposableListener(this._transcript, 'scroll', () => {
 			this._pinnedToBottom = this._isAtBottom();
 		}));
+
+		// Follow-up input composer, pinned below the scrollable transcript.
+		const composerHost = this.element.appendChild(dom.$('.claude-native-composer-host'));
+		this._composer = this._register(this.instantiationService.createInstance(ClaudeNativeInputComposer, { getContextFolderUri: () => undefined }));
+		this._composer.render(composerHost);
 	}
 
 	override dispose(): void {
@@ -102,7 +111,7 @@ export class ClaudeNativeChatView extends AbstractChatView {
 		super.dispose();
 	}
 
-	override setChat(chat: IChat, _historyKey?: string, _session?: IActiveSession): void {
+	override setChat(chat: IChat, _historyKey?: string, session?: IActiveSession): void {
 		const resource = chat.resource;
 
 		// Skip loading if we're already showing this chat.
@@ -133,6 +142,8 @@ export class ClaudeNativeChatView extends AbstractChatView {
 			this._viewModel.value = viewModel;
 			this._viewModelListeners.add(viewModel.onDidChange(() => this._onViewModelChange()));
 
+			this._composer.setModel(ref.object, session);
+
 			this._pinnedToBottom = true;
 			this._renderAll();
 		}, err => {
@@ -153,6 +164,7 @@ export class ClaudeNativeChatView extends AbstractChatView {
 		this._viewModelListeners.clear();
 		this._viewModel.clear();
 		this._modelRef.clear();
+		this._composer.setModel(undefined, undefined);
 		this._clearTranscript();
 	}
 
@@ -239,10 +251,23 @@ export class ClaudeNativeChatView extends AbstractChatView {
 
 	protected override doLayout(width: number, _height: number, _top: number, _left: number): void {
 		this._renderer.layout(width);
+		this._composer.layout();
 		this._scrollToBottomIfPinned();
 	}
 
+	override prefillInput(text: string): void {
+		this._composer.prefill(text);
+	}
+
+	override sendQuery(text: string): void {
+		this._composer.sendQuery(text);
+	}
+
+	override attach(uris: URI[]): void {
+		this._composer.attach(uris);
+	}
+
 	override focus(): void {
-		this._transcript.focus();
+		this._composer.focus();
 	}
 }
