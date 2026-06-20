@@ -228,6 +228,27 @@ export const ClaudePreferAgentHostAgentsSettingId = 'chat.agents.claude.preferAg
 export const ClaudePreferAgentHostEditorSettingId = 'chat.editor.claude.preferAgentHost';
 
 /**
+ * Single switch that makes the **Agents Window** run Claude Code via the native
+ * `claude` CLI instead of GitHub Copilot, rendered in the normal GUI chat. When
+ * `true`:
+ *  - the agent host's Claude provider is surfaced (like
+ *    {@link ClaudePreferAgentHostAgentsSettingId}), so "Claude Code" is the
+ *    Claude implementation in the window, and
+ *  - the agent host drives the GUI chat via CLI transport (implies
+ *    {@link AgentHostClaudeUseCliSettingId}): it spawns the native `claude`
+ *    binary in headless `stream-json` mode, so the Claude Agent SDK is never
+ *    invoked at runtime and the CLI authenticates from the user's own
+ *    `claude login`.
+ *
+ * The transport leg is forwarded to the agent host process at spawn (see the
+ * starters' `claudeUseCli`), so it is startup-only — the agent host must be
+ * restarted for a change to take effect. The raw embedded-terminal view is a
+ * separate, independent control ("Use Claude CLI" toggle) and is not affected
+ * by this setting. EXP-backed (`experiment: { mode: 'startup' }`).
+ */
+export const ClaudeNativeCliSettingId = 'chat.agents.claude.nativeCli';
+
+/**
  * The per-window setting that selects which Claude implementation surfaces:
  * the Agents Window reads {@link ClaudePreferAgentHostAgentsSettingId}, every
  * other window reads {@link ClaudePreferAgentHostEditorSettingId}. Callers that
@@ -250,7 +271,9 @@ export function claudePreferAgentHostSettingId(isSessionsWindow: boolean): strin
  *
  * Mirrors the EH-side gate declared in the extension's `chatSessions`
  * contribution `when` clause:
- *   - Agents Window  → {@link ClaudePreferAgentHostAgentsSettingId}
+ *   - Agents Window  → {@link ClaudePreferAgentHostAgentsSettingId} or
+ *     {@link ClaudeNativeCliSettingId} (the native-CLI switch implies the agent
+ *     host provides Claude, since the CLI resumes agent-host sessions)
  *   - Editor Window  → {@link ClaudePreferAgentHostEditorSettingId}
  *
  * When the relevant setting is `false`, the extension-host Claude is the one
@@ -265,6 +288,9 @@ export function claudePreferAgentHostSettingId(isSessionsWindow: boolean): strin
  */
 export function shouldSurfaceLocalAgentHostProvider(provider: AgentProvider, configurationService: IConfigurationService, isSessionsWindow: boolean): boolean {
 	if (provider !== 'claude') {
+		return true;
+	}
+	if (isSessionsWindow && configurationService.getValue<boolean>(ClaudeNativeCliSettingId) === true) {
 		return true;
 	}
 	return configurationService.getValue<boolean>(claudePreferAgentHostSettingId(isSessionsWindow)) === true;
