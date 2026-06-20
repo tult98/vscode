@@ -10,7 +10,7 @@ import { localize, localize2 } from '../../../../nls.js';
 import { Action2, registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 import { Menus } from '../../../browser/menus.js';
-import { IsPhoneLayoutContext, SessionsTerminalModeEnabledContext, SessionsWelcomeVisibleContext } from '../../../common/contextkeys.js';
+import { IsPhoneLayoutContext, SessionsClaudeNativeModeEnabledContext, SessionsTerminalModeEnabledContext, SessionsWelcomeVisibleContext } from '../../../common/contextkeys.js';
 import { ConfigurationScope, Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { registerWorkbenchContribution2, WorkbenchPhase } from '../../../../workbench/common/contributions.js';
 import { ISessionsService } from '../../../services/sessions/browser/sessionsService.js';
@@ -33,6 +33,7 @@ import { SessionsAICustomizationWorkspaceService } from './aiCustomizationWorksp
 import { SessionsCustomizationHarnessService } from './customizationHarnessService.js';
 import { IChatViewFactory } from '../../../services/chatView/browser/chatViewFactory.js';
 import { ISessionTerminalModeService, SessionTerminalModeService } from '../../../services/chatView/browser/sessionTerminalMode.js';
+import { ISessionClaudeNativeModeService, SessionClaudeNativeModeService } from '../../../services/chatView/browser/sessionClaudeNativeMode.js';
 import { ISessionTerminalService, SessionTerminalService } from '../../../services/chatView/browser/sessionTerminalService.js';
 import { ChatViewFactory } from './chatView.js';
 import { CHAT_CATEGORY } from '../../../../workbench/contrib/chat/browser/actions/chatActions.js';
@@ -41,8 +42,6 @@ import { SessionsChatAccessibilityHelp } from './sessionsChatAccessibilityHelp.j
 import { SessionsOpenerParticipantContribution } from './sessionsOpenerParticipant.js';
 import { WorktreeCreatedTaskDispatcher, AGENT_HOST_RUN_WORKTREE_CREATED_TASKS_SETTING } from './worktreeCreatedTaskDispatcher.js';
 import { AGENT_SESSIONS_SCOPED_INPUT_HISTORY_SETTING } from './sessionsChatHistory.js';
-import '../../sessions/browser/mobile/mobileOverlayContribution.js';
-import '../../providers/copilotChatSessions/browser/cyclePermissionModeAction.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { EditorAreaFocusContext, IsAuxiliaryWindowContext } from '../../../../workbench/common/contextkeys.js';
 import { NEW_SESSION_ACTION_ID } from '../common/constants.js';
@@ -121,6 +120,39 @@ class ToggleSessionTerminalModeAction extends Action2 {
 registerAction2(ToggleSessionTerminalModeAction);
 
 
+/**
+ * Global toggle that switches every eligible created session between the upstream
+ * ChatWidget renderer and the new Claude-parity native renderer.
+ */
+class ToggleClaudeNativeModeAction extends Action2 {
+
+	constructor() {
+		super({
+			id: 'agentSession.toggleClaudeNativeMode',
+			title: localize2('toggleClaudeNativeMode', "Use Claude Native UI"),
+			f1: true,
+			icon: Codicon.sparkle,
+			toggled: {
+				condition: SessionsClaudeNativeModeEnabledContext,
+				title: localize('usingClaudeNativeUi', "Using Claude Native UI"),
+			},
+			menu: [{
+				id: Menus.TitleBarSessionMenu,
+				group: 'navigation',
+				order: 12,
+				when: ContextKeyExpr.and(IsAuxiliaryWindowContext.toNegated(), SessionsWelcomeVisibleContext.toNegated(), IsPhoneLayoutContext.negate()),
+			}]
+		});
+	}
+
+	override run(accessor: ServicesAccessor): void {
+		accessor.get(ISessionClaudeNativeModeService).toggle();
+	}
+}
+
+registerAction2(ToggleClaudeNativeModeAction);
+
+
 // register actions
 registerAction2(BranchChatSessionAction);
 
@@ -138,6 +170,7 @@ registerSingleton(IAICustomizationWorkspaceService, SessionsAICustomizationWorks
 registerSingleton(ICustomizationHarnessService, SessionsCustomizationHarnessService, InstantiationType.Delayed);
 registerSingleton(IChatViewFactory, ChatViewFactory, InstantiationType.Delayed);
 registerSingleton(ISessionTerminalModeService, SessionTerminalModeService, InstantiationType.Delayed);
+registerSingleton(ISessionClaudeNativeModeService, SessionClaudeNativeModeService, InstantiationType.Delayed);
 registerSingleton(ISessionTerminalService, SessionTerminalService, InstantiationType.Delayed);
 
 // register accessibility help

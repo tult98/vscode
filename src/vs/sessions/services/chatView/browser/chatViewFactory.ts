@@ -35,4 +35,13 @@ export interface IChatViewFactory {
 	 * the global "terminal mode" toggle is on.
 	 */
 	createTerminalView(): AbstractChatView;
+
+	/**
+	 * Creates a view that hosts the new Claude-parity native renderer for an
+	 * active session. Used when the global "Claude native GUI" toggle is on.
+	 * Implements the full Claude Code feature set natively (see
+	 * `CLAUDE_CODE_PARITY.md`). Replaces the upstream ChatWidget-based
+	 * {@link createChatView} for eligible local Claude sessions.
+	 */
+	createClaudeNativeView(): AbstractChatView;
 }

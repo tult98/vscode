@@ -11,6 +11,7 @@ import { Codicon } from '../../../../base/common/codicons.js';
 import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
 import { ViewPaneContainer } from '../../../../workbench/browser/parts/views/viewPaneContainer.js';
 import { registerWorkbenchContribution2, WorkbenchPhase } from '../../../../workbench/common/contributions.js';
+import './mobile/mobileOverlayContribution.js';
 import { SessionsTitleBarContribution } from './sessionsTitleBarWidget.js';
 import { SessionsTelemetryContribution } from './sessionsTelemetry.contribution.js';
 import { SessionsView, SessionsViewId } from './views/sessionsView.js';

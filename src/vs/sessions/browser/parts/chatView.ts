@@ -19,7 +19,7 @@ import { IActiveSession } from '../../services/sessions/common/sessionsManagemen
  * Discriminates between concrete {@link AbstractChatView} subclasses without
  * requiring core code (`sessions/browser/`) to import them from contrib.
  */
-export type ChatViewKind = 'newSession' | 'newChatInSession' | 'chat' | 'terminal';
+export type ChatViewKind = 'newSession' | 'newChatInSession' | 'chat' | 'terminal' | 'claudeNative';
 
 /**
  * Options passed to a chat view when it is created.
