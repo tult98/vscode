@@ -29,17 +29,14 @@ import { ServiceCollection } from '../../../../../platform/instantiation/common/
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { getSimpleEditorOptions } from '../../../../../workbench/contrib/codeEditor/browser/simpleEditorOptions.js';
 import { isExplicitFileOrImageVariableEntry, toFileVariableEntry } from '../../../../../workbench/contrib/chat/common/attachments/chatVariableEntries.js';
-import { IChatSessionsService, isAgentHostTarget, localChatSessionType } from '../../../../../workbench/contrib/chat/common/chatSessionsService.js';
+import { IChatSessionsService, isAgentHostTarget } from '../../../../../workbench/contrib/chat/common/chatSessionsService.js';
 import { IChatService, ChatSendResult } from '../../../../../workbench/contrib/chat/common/chatService/chatService.js';
 import { ChatAgentLocation } from '../../../../../workbench/contrib/chat/common/constants.js';
 import { IChatModel } from '../../../../../workbench/contrib/chat/common/model/chatModel.js';
 import { getChatSessionType } from '../../../../../workbench/contrib/chat/common/model/chatUri.js';
 import { IActiveSession } from '../../../../services/sessions/common/sessionsManagement.js';
-import { ISessionContext, SessionContext } from '../../../../services/sessions/browser/sessionContext.js';
 import { AgentHostInputCompletionHandler } from '../agentHostInputCompletions.js';
-import { INewChatModelPickerService, NewChatModelPickerService } from '../newChatModelPicker.js';
 import { NewChatContextAttachments } from '../newChatContextAttachments.js';
-import { SlashCommandHandler } from '../slashCommands.js';
 
 const MIN_EDITOR_HEIGHT = 30;
 const MAX_EDITOR_HEIGHT = 180;
@@ -171,9 +168,9 @@ interface IComposerStatus {
  *
  * It submits follow-up turns directly through {@link IChatService.sendRequest} and morphs its
  * send affordance into a stop affordance while a request is in flight. It reuses the simple
- * Monaco input editor, {@link NewChatContextAttachments} (chips / drag-drop / paste / picker),
- * {@link SlashCommandHandler} (`/` commands) and {@link AgentHostInputCompletionHandler}
- * (`/` + `@` completions). The model, thinking-effort and permission-mode dropdowns are custom
+ * Monaco input editor, {@link NewChatContextAttachments} (chips / drag-drop / paste / picker)
+ * and {@link AgentHostInputCompletionHandler} (`/` + `@` completions forwarded to the agent
+ * host's Claude CLI). The model, thinking-effort and permission-mode dropdowns are custom
  * popups matching the mock; their selections are local UI state for now (real wiring to the
  * model / permission services is a follow-up), and the status-strip data is seeded with
  * placeholders updatable via {@link setStatus}.
@@ -181,8 +178,6 @@ interface IComposerStatus {
  * See `src/vs/sessions/contrib/chat/CLAUDE_CODE_PARITY.md` (Session 2).
  */
 export class ClaudeNativeInputComposer extends Disposable {
-
-	private readonly _scopedInstantiationService: IInstantiationService;
 
 	/** The active session, mirrored into an observable for the pickers / completions. */
 	private readonly _session = observableValue<IActiveSession | undefined>('claudeNativeComposerSession', undefined);
@@ -197,7 +192,6 @@ export class ClaudeNativeInputComposer extends Disposable {
 	private _editorContainer!: HTMLElement;
 
 	private readonly _contextAttachments: NewChatContextAttachments;
-	private _slashCommandHandler: SlashCommandHandler | undefined;
 	private _agentHostInputCompletionHandler: AgentHostInputCompletionHandler | undefined;
 
 	private _sendEl: HTMLElement | undefined;
@@ -260,11 +254,6 @@ export class ClaudeNativeInputComposer extends Disposable {
 		@ILogService private readonly logService: ILogService,
 	) {
 		super();
-
-		this._scopedInstantiationService = this._register(this.instantiationService.createChild(new ServiceCollection(
-			[INewChatModelPickerService, new NewChatModelPickerService()],
-			[ISessionContext, new SessionContext(this._session)],
-		)));
 
 		this._requestInProgress = derived(reader => this._model.read(reader)?.requestInProgress.read(reader) ?? false);
 
@@ -434,8 +423,7 @@ export class ClaudeNativeInputComposer extends Disposable {
 			this._updateBashHint();
 		}));
 
-		// `/` slash commands + `/`/`@` completions resolved against the active session.
-		this._slashCommandHandler = this._register(this._scopedInstantiationService.createInstance(SlashCommandHandler, this._editor));
+		// `/` + `@` completions resolved against the active session's agent host.
 		this._agentHostInputCompletionHandler = this._register(this.instantiationService.createInstance(AgentHostInputCompletionHandler, this._editor, this._contextAttachments));
 	}
 
@@ -753,21 +741,14 @@ export class ClaudeNativeInputComposer extends Disposable {
 			return;
 		}
 
-		// Built-in slash commands (`/agents`, `/skills`, ...) execute locally.
-		if (query && this._slashCommandHandler?.tryExecuteSlashCommand(query)) {
-			this._editor.getModel()?.setValue('');
-			return;
-		}
-
 		const attachments = this._agentHostInputCompletionHandler?.getAttachmentsForSend(query, queryOffset) ?? [...this._contextAttachments.attachments];
 		const attachedContext = attachments.length > 0 ? attachments : undefined;
 
-		// Bind the request to the session's coding agent (e.g. `agent-host-claude`)
-		// the same way `ChatWidget` does via `lockToCodingAgent` → `agentIdSilent`.
-		// Without it the request falls through to the default chat agent (Copilot).
-		const sessionType = getChatSessionType(model.sessionResource);
-		const hasCodingAgent = sessionType !== localChatSessionType && !!this.chatSessionsService.getChatSessionContribution(sessionType);
-		const agentIdSilent = hasCodingAgent ? sessionType : undefined;
+		// Bind the request to the session's agent-host coding agent (e.g.
+		// `agent-host-claude`) the same way `ChatWidget` does via `agentIdSilent`.
+		// This UI only ever drives agent-host sessions, so the session type is the
+		// agent id; no Copilot/local-chat fallback is needed.
+		const agentIdSilent = getChatSessionType(model.sessionResource);
 
 		this._sending = true;
 		this._editor.updateOptions({ readOnly: true });

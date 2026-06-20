@@ -36,6 +36,7 @@ import { ISessionTerminalModeService, SessionTerminalModeService } from '../../.
 import { ISessionClaudeNativeModeService, SessionClaudeNativeModeService } from '../../../services/chatView/browser/sessionClaudeNativeMode.js';
 import { ISessionTerminalService, SessionTerminalService } from '../../../services/chatView/browser/sessionTerminalService.js';
 import { ChatViewFactory } from './chatView.js';
+import { SessionViewModeToolbarContribution, TOGGLE_VIEW_MODE_ACTION_ID } from './sessionViewModeActionViewItem.js';
 import { CHAT_CATEGORY } from '../../../../workbench/contrib/chat/browser/actions/chatActions.js';
 import { AccessibleViewRegistry } from '../../../../platform/accessibility/browser/accessibleViewRegistry.js';
 import { SessionsChatAccessibilityHelp } from './sessionsChatAccessibilityHelp.js';
@@ -88,9 +89,52 @@ registerAction2(NewChatInSessionsWindowAction);
 
 
 /**
+ * Anchor action for the "Option A" view-mode segmented toggle in the session
+ * title bar. The visual control is supplied by {@link SessionViewModeActionViewItem};
+ * this action provides the menu slot, the command-palette/keyboard entry point,
+ * and the fallback when the custom view item is unavailable. It collapses the
+ * former "Use Claude CLI" and "Use Claude Native UI" buttons into one
+ * mutually-exclusive choice: Terminal (TUI) vs rich native GUI.
+ */
+class ToggleSessionViewModeAction extends Action2 {
+
+	constructor() {
+		super({
+			id: TOGGLE_VIEW_MODE_ACTION_ID,
+			title: localize2('toggleViewMode', "Toggle Session View Mode (TUI / GUI)"),
+			f1: true,
+			icon: Codicon.window,
+			menu: [{
+				id: Menus.TitleBarSessionMenu,
+				group: 'navigation',
+				order: 11,
+				when: ContextKeyExpr.and(IsAuxiliaryWindowContext.toNegated(), SessionsWelcomeVisibleContext.toNegated(), IsPhoneLayoutContext.negate()),
+			}]
+		});
+	}
+
+	override run(accessor: ServicesAccessor): void {
+		const terminalModeService = accessor.get(ISessionTerminalModeService);
+		const claudeNativeModeService = accessor.get(ISessionClaudeNativeModeService);
+		if (terminalModeService.terminalMode.get()) {
+			// TUI → GUI (rich native renderer).
+			terminalModeService.setEnabled(false);
+			claudeNativeModeService.setEnabled(true);
+		} else {
+			// GUI → TUI.
+			terminalModeService.setEnabled(true);
+		}
+	}
+}
+
+registerAction2(ToggleSessionViewModeAction);
+
+
+/**
  * Global toggle that switches every eligible session's center pane between the
- * GUI chat and an embedded native `claude` CLI terminal. Lives in the window
- * title bar (not the per-session header) because it is a global mode.
+ * GUI chat and an embedded native `claude` CLI terminal. No longer shown as its
+ * own title-bar button (the {@link ToggleSessionViewModeAction} segmented toggle
+ * owns that now); kept as a command so keybindings and the palette still work.
  */
 class ToggleSessionTerminalModeAction extends Action2 {
 
@@ -98,17 +142,12 @@ class ToggleSessionTerminalModeAction extends Action2 {
 		super({
 			id: 'agentSession.toggleTerminalMode',
 			title: localize2('toggleTerminalMode', "Use Claude CLI"),
+			f1: true,
 			icon: Codicon.terminal,
 			toggled: {
 				condition: SessionsTerminalModeEnabledContext,
 				title: localize('usingClaudeCli', "Using Claude CLI"),
 			},
-			menu: [{
-				id: Menus.TitleBarSessionMenu,
-				group: 'navigation',
-				order: 11,
-				when: ContextKeyExpr.and(IsAuxiliaryWindowContext.toNegated(), SessionsWelcomeVisibleContext.toNegated(), IsPhoneLayoutContext.negate()),
-			}]
 		});
 	}
 
@@ -122,7 +161,9 @@ registerAction2(ToggleSessionTerminalModeAction);
 
 /**
  * Global toggle that switches every eligible created session between the upstream
- * ChatWidget renderer and the new Claude-parity native renderer.
+ * ChatWidget renderer and the new Claude-parity native renderer. No longer shown
+ * as its own title-bar button; kept as a command so the legacy ChatWidget remains
+ * reachable from the palette/keybindings.
  */
 class ToggleClaudeNativeModeAction extends Action2 {
 
@@ -136,12 +177,6 @@ class ToggleClaudeNativeModeAction extends Action2 {
 				condition: SessionsClaudeNativeModeEnabledContext,
 				title: localize('usingClaudeNativeUi', "Using Claude Native UI"),
 			},
-			menu: [{
-				id: Menus.TitleBarSessionMenu,
-				group: 'navigation',
-				order: 12,
-				when: ContextKeyExpr.and(IsAuxiliaryWindowContext.toNegated(), SessionsWelcomeVisibleContext.toNegated(), IsPhoneLayoutContext.negate()),
-			}]
 		});
 	}
 
@@ -161,6 +196,7 @@ registerWorkbenchContribution2(RunScriptContribution.ID, RunScriptContribution, 
 registerWorkbenchContribution2(SessionsOpenerParticipantContribution.ID, SessionsOpenerParticipantContribution, WorkbenchPhase.BlockStartup);
 registerWorkbenchContribution2(RegisterDefaultSessionTaskRunnersContribution.ID, RegisterDefaultSessionTaskRunnersContribution, WorkbenchPhase.BlockStartup);
 registerWorkbenchContribution2(WorktreeCreatedTaskDispatcher.ID, WorktreeCreatedTaskDispatcher, WorkbenchPhase.AfterRestored);
+registerWorkbenchContribution2(SessionViewModeToolbarContribution.ID, SessionViewModeToolbarContribution, WorkbenchPhase.BlockStartup);
 
 // register services
 registerSingleton(IPromptsService, AgenticPromptsService, InstantiationType.Delayed);
