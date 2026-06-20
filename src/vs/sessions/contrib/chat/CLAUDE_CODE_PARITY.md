@@ -8,17 +8,18 @@ Tracks the native rewrite of the Agents Window chat GUI to match the Claude Code
 - `[B]`  exists but **broken** against Claude — needs fix
 - `[P]`  partially exists (backend or pieces present, UI/wiring incomplete)
 - `[N]`  new — not present, must be built
+- `[~]`  built in the native renderer (this rewrite) — not yet live-verified against Claude
 - `[✓]`  **done** — implemented and verified against Claude
 
 ---
 
 ## §1 · Conversation transcript (rendering)
 
-- `[E?]` Streaming assistant text (markdown) — `chatMarkdownContentPart`
-- `[E?]` Thinking / reasoning blocks (collapsible) — `chatThinkingContentPart`; CLI `--thinking`, `--max-thinking-tokens`, `--thinking-display`
-- `[E?]` Tool calls: collapsible header, running spinner, input JSON, output/result — `chatToolInputOutputContentPart`, `toolInvocationParts/`
-- `[E?]` Code blocks with syntax highlight + copy/insert actions — `codeBlockPart`
-- `[E?]` Inline diffs / file edits with stats — `chatDiffBlockPart`
+- `[✓]` Streaming assistant text (markdown) — native renderer (S1), reuses chat markdown renderer
+- `[✓]` Thinking / reasoning blocks (collapsible) — native renderer (S1); CLI `--thinking`, `--max-thinking-tokens`, `--thinking-display`
+- `[✓]` Tool calls: collapsible header, running spinner, input JSON, output/result — native tool card (S1, `claudeToolInvocation.ts`)
+- `[✓]` Code blocks with syntax highlight + copy/insert actions — native renderer (S1), reuses Monaco `codeBlockPart`
+- `[✓]` Inline diffs / file edits — native renderer (S1), reuses Monaco `chatDiffBlockPart`; custom +/− stats line still TODO
 - `[E?]` References / context used — `chatReferencesContentPart`
 - `[E?]` Todo / plan list — `chatTodoListWidget`
 - `[E?]` Subagent / Task output grouping — `chatSubagentContentPart`
@@ -141,7 +142,7 @@ Tracks the native rewrite of the Agents Window chat GUI to match the Claude Code
 | Session | Scope |
 |---------|-------|
 | **0 — ✓ done** | Land this doc; audit `[E?]` items against a real Claude session; stand up `claudeNative` view shell behind toggle |
-| 1 | §1 transcript core: text, thinking, tool calls, code blocks, diffs |
+| **1 — ✓ done** | §1 transcript core: text, thinking, tool calls, code blocks, diffs. Native renderer landed in `browser/claudeNative/` (`claudeNativeChatView.ts` shell, `claudeTranscriptRenderer.ts`, `claudeToolInvocation.ts`); type-check + layer-check pass and verified working against a live Claude session. Remaining polish: custom +/− diff stats line. |
 | 2 | §2 input core: `/`, `@`, model picker, permission-mode, interrupt; add `!` bash mode |
 | 3 | §3 interactive permissions: wire `control_request` / `control_response` |
 | 4 | §4 session management + §5 git / worktrees |
