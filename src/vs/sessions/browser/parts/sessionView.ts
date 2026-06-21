@@ -16,6 +16,7 @@ import { asCssVariable } from '../../../platform/theme/common/colorUtils.js';
 import { IActiveSession } from '../../services/sessions/common/sessionsManagement.js';
 import { IChatViewFactory } from '../../services/chatView/browser/chatViewFactory.js';
 import { ISessionTerminalModeService } from '../../services/chatView/browser/sessionTerminalMode.js';
+import { ISessionClaudeNativeModeService } from '../../services/chatView/browser/sessionClaudeNativeMode.js';
 import { getNativeTerminalLaunch, ISessionTerminalService } from '../../services/chatView/browser/sessionTerminalService.js';
 import { AbstractChatView, ChatViewKind, IChatViewOptions } from './chatView.js';
 import { ChatCompositeBar } from './chatCompositeBar.js';
@@ -91,6 +92,7 @@ export class SessionView extends Disposable implements ISerializableView {
 	constructor(
 		@IChatViewFactory private readonly chatViewFactory: IChatViewFactory,
 		@ISessionTerminalModeService private readonly terminalModeService: ISessionTerminalModeService,
+		@ISessionClaudeNativeModeService private readonly claudeNativeModeService: ISessionClaudeNativeModeService,
 		@ISessionTerminalService private readonly sessionTerminalService: ISessionTerminalService,
 		@IInstantiationService instantiationService: IInstantiationService,
 		@IContextKeyService contextKeyService: IContextKeyService,
@@ -165,6 +167,7 @@ export class SessionView extends Disposable implements ISerializableView {
 
 		this._openSessionDisposables.add(autorun(reader => {
 			const terminalMode = this.terminalModeService.terminalMode.read(reader);
+			const claudeNativeMode = this.claudeNativeModeService.claudeNativeMode.read(reader);
 			const launch = (terminalMode && session !== undefined) ? getNativeTerminalLaunch(session, reader) : undefined;
 			// Terminal mode shows the terminal for eligible local Claude sessions —
 			// created sessions resume immediately, but a brand-new session stays on
@@ -181,6 +184,10 @@ export class SessionView extends Disposable implements ISerializableView {
 				desiredKind = 'newSession';
 			} else if (session.activeChat.read(reader).status.read(reader) === SessionStatus.Untitled) {
 				desiredKind = 'newChatInSession';
+			} else if (claudeNativeMode) {
+				// Claude native GUI mode: render the new Claude-parity renderer
+				// instead of the upstream ChatWidget for created sessions.
+				desiredKind = 'claudeNative';
 			} else {
 				desiredKind = 'chat';
 			}
@@ -190,9 +197,11 @@ export class SessionView extends Disposable implements ISerializableView {
 			if (!view || view.kind !== desiredKind) {
 				view = desiredKind === 'terminal'
 					? this.chatViewFactory.createTerminalView()
-					: desiredKind === 'chat'
-						? this.chatViewFactory.createChatView()
-						: this.chatViewFactory.createNewChatView(desiredKind === 'newChatInSession', options);
+					: desiredKind === 'claudeNative'
+						? this.chatViewFactory.createClaudeNativeView()
+						: desiredKind === 'chat'
+							? this.chatViewFactory.createChatView()
+							: this.chatViewFactory.createNewChatView(desiredKind === 'newChatInSession', options);
 				this._contentContainer.replaceChildren(view.element);
 				this._currentView.value = view;
 				view.setActive(this._isActive);
