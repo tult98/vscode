@@ -31,7 +31,6 @@ export const SessionSupportsMultipleChatsContext = new RawContextKey<boolean>('s
 export const SessionIsReadContext = new RawContextKey<boolean>('sessionIsRead', true, localize('sessionIsRead', "Whether the session has been marked as read"));
 export const SessionIsArchivedContext = new RawContextKey<boolean>('sessionIsArchived', false, localize('sessionIsArchived', "Whether the session is archived (marked as done)"));
 export const SessionHasChangesContext = new RawContextKey<boolean>('sessionHasChanges', false, localize('sessionHasChanges', "Whether the session view's session has pending changes (insertions or deletions)"));
-export const SessionsTerminalModeEnabledContext = new RawContextKey<boolean>('sessionsTerminalModeEnabled', false, localize('sessionsTerminalModeEnabled', "Whether the global terminal mode is on, rendering each eligible session's native Claude CLI terminal instead of the GUI chat"));
 
 //#endregion
 

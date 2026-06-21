@@ -27,8 +27,8 @@ import { ILogService } from '../../../log/common/log.js';
  *
  * MVP scope: only the {@link Query} members the `ClaudeSdkPipeline` actually
  * calls are backed by real behavior. The `initialize` control handshake IS
- * spoken (so {@link Query.supportedModels} / {@link Query.initializationResult}
- * return the running instance's real model list); the remaining mid-session
+ * spoken (so {@link Query.supportedModels} returns the running instance's real
+ * model list); the remaining mid-session
  * control requests (`setModel`, `setPermissionMode`, flag settings, plugin
  * reload, customization snapshots) are not reimplemented — those degrade to
  * no-ops / empty results. Model / permission mode are applied via spawn flags,
@@ -321,8 +321,7 @@ export function createClaudeCliWarmQuery(
 				logService.info('[Claude CLI] applyFlagSettings ignored mid-session');
 			},
 			// Backed by the `initialize` handshake above — the only control
-			// methods this transport answers with real data.
-			initializationResult: (): Promise<SDKControlInitializeResponse> => initialization.p,
+			// method this transport answers with real data.
 			supportedModels: async (): Promise<ModelInfo[]> => (await initialization.p).models,
 			supportedCommands: async () => [],
 			supportedAgents: async () => [],

@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
-import { DeferredPromise, timeout } from '../../../../../../base/common/async.js';
+import { timeout } from '../../../../../../base/common/async.js';
 import { Emitter, Event } from '../../../../../../base/common/event.js';
 import { DisposableStore, toDisposable, type IReference } from '../../../../../../base/common/lifecycle.js';
 import { autorun, constObservable, ISettableObservable, observableValue, type IObservable } from '../../../../../../base/common/observable.js';
@@ -15,7 +15,7 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/
 import { AgentSession, ClaudePreferAgentHostAgentsSettingId, ClaudePreferAgentHostEditorSettingId, IAgentHostService, type IAgentCreateSessionConfig, type IAgentSessionMetadata } from '../../../../../../platform/agentHost/common/agentService.js';
 import type { IAgentSubscription } from '../../../../../../platform/agentHost/common/state/agentSubscription.js';
 import type { ResolveSessionConfigResult } from '../../../../../../platform/agentHost/common/state/protocol/commands.js';
-import { CustomizationLoadStatus, CustomizationType, SessionLifecycle, type AgentInfo, type ChangesSummary, type Customization, type ModelSelection, type RootState, type SessionConfigState, type SessionState, type SessionSummary } from '../../../../../../platform/agentHost/common/state/protocol/state.js';
+import { CustomizationLoadStatus, CustomizationType, SessionLifecycle, type AgentInfo, type ChangesSummary, type ModelSelection, type RootState, type SessionConfigState, type SessionState, type SessionSummary } from '../../../../../../platform/agentHost/common/state/protocol/state.js';
 import { buildChatUri, buildDefaultChatUri, ChangesetStatus, SessionStatus as ProtocolSessionStatus, StateComponents, type ChangesetState, type ChatSummary } from '../../../../../../platform/agentHost/common/state/sessionState.js';
 import { ActionType, NotificationType, type ActionEnvelope, type IRootConfigChangedAction, type SessionAction, type TerminalAction, type INotification, type ClientAnnotationsAction } from '../../../../../../platform/agentHost/common/state/sessionActions.js';
 import { SessionConfigKey } from '../../../../../../platform/agentHost/common/sessionConfigKeys.js';
@@ -1186,112 +1186,6 @@ suite('LocalAgentHostSessionsProvider', () => {
 		assert.strictEqual(fired, afterFirstCustomization, 'expected event NOT to fire when customizations are unchanged');
 	});
 
-	test('NewSession forwards SessionState into _lastSessionStates so the picker sees customizations before first message', async () => {
-		const provider = createProvider(disposables, agentHost);
-		const sessionTypeId = provider.sessionTypes[0].id;
-		const session = provider.createNewSession(URI.parse('file:///home/user/proj'), sessionTypeId);
-		await timeout(0); // let eagerCreate complete and the subscription seed
-
-		const rawId = session.resource.path.substring(1);
-
-		let fired = 0;
-		disposables.add(provider.onDidChangeCustomAgents(() => { fired++; }));
-
-		// Push a SessionState carrying customizations as if the host had
-		// resolved them and dispatched a SessionCustomizationsChanged.
-		const customizations: Customization[] = [{
-			type: CustomizationType.Plugin,
-			id: 'plugin://new-session',
-			uri: 'plugin://new-session',
-			name: 'p',
-			enabled: true,
-			load: { kind: CustomizationLoadStatus.Loaded },
-			children: [
-				{ type: CustomizationType.Agent, id: 'agent://reviewer', uri: 'agent://reviewer', name: 'reviewer' },
-				{ type: CustomizationType.Agent, id: 'agent://triage', uri: 'agent://triage', name: 'triage' },
-			],
-		}];
-		const state: SessionState = {
-			summary: {
-				resource: AgentSession.uri(sessionTypeId, rawId).toString(),
-				provider: sessionTypeId,
-				title: '',
-				status: ProtocolSessionStatus.Idle,
-				createdAt: 0,
-				modifiedAt: 0,
-			},
-			lifecycle: SessionLifecycle.Ready,
-			chats: [],
-			customizations,
-		};
-		agentHost.setSessionState(rawId, sessionTypeId, state);
-
-		assert.deepStrictEqual(provider.getCustomAgents(session.sessionId), [
-			{ type: CustomizationType.Agent, id: 'agent://reviewer', uri: 'agent://reviewer', name: 'reviewer' },
-			{ type: CustomizationType.Agent, id: 'agent://triage', uri: 'agent://triage', name: 'triage' },
-		]);
-		assert.ok(fired > 0, 'expected onDidChangeCustomAgents to fire when SessionState arrives');
-
-		// A second update with a different customizations identity should
-		// re-fire and update the picker.
-		const after = fired;
-		agentHost.setSessionState(rawId, sessionTypeId, {
-			...state,
-			customizations: [{
-				...(customizations[0] as Extract<Customization, { type: CustomizationType.Plugin }>),
-				children: [{ type: CustomizationType.Agent, id: 'agent://only', uri: 'agent://only', name: 'only' }],
-			}],
-		});
-		assert.deepStrictEqual(provider.getCustomAgents(session.sessionId), [
-			{ type: CustomizationType.Agent, id: 'agent://only', uri: 'agent://only', name: 'only' },
-		]);
-		assert.ok(fired > after, 'expected onDidChangeCustomAgents to fire again on a second update');
-	});
-
-	test('NewSession dispose clears _lastSessionStates entry and fires onDidChangeCustomAgents', async () => {
-		const provider = createProvider(disposables, agentHost);
-		const sessionTypeId = provider.sessionTypes[0].id;
-		const first = provider.createNewSession(URI.parse('file:///home/user/a'), sessionTypeId);
-		await timeout(0);
-
-		const rawId = first.resource.path.substring(1);
-		agentHost.setSessionState(rawId, sessionTypeId, {
-			summary: {
-				resource: AgentSession.uri(sessionTypeId, rawId).toString(),
-				provider: sessionTypeId,
-				title: '',
-				status: ProtocolSessionStatus.Idle,
-				createdAt: 0,
-				modifiedAt: 0,
-			},
-			lifecycle: SessionLifecycle.Ready,
-			chats: [],
-			customizations: [{
-				type: CustomizationType.Plugin,
-				id: 'plugin://x',
-				uri: 'plugin://x',
-				name: 'p',
-				enabled: true,
-				load: { kind: CustomizationLoadStatus.Loaded },
-				children: [{ type: CustomizationType.Agent, id: 'agent://x', uri: 'agent://x', name: 'x' }],
-			}],
-		});
-		assert.strictEqual(provider.getCustomAgents(first.sessionId).length, 1);
-
-		let fired = 0;
-		disposables.add(provider.onDidChangeCustomAgents(() => { fired++; }));
-
-		// Trigger disposal of the first NewSession explicitly. Providers no
-		// longer dispose drafts implicitly when a new one is created, so the
-		// management layer (modeled here) disposes the abandoned draft.
-		provider.createNewSession(URI.parse('file:///home/user/b'), sessionTypeId);
-		provider.deleteNewSession(first.sessionId);
-		await timeout(0);
-
-		assert.deepStrictEqual(provider.getCustomAgents(first.sessionId), []);
-		assert.ok(fired > 0, 'expected onDidChangeCustomAgents to fire on NewSession dispose');
-	});
-
 	// ---- Session lifecycle -------
 
 	test('createNewSession returns session with correct fields', () => {
@@ -1334,16 +1228,6 @@ suite('LocalAgentHostSessionsProvider', () => {
 			seededImmediately: 'autoApprove',
 			forwardedToAgentHost: 'autoApprove',
 		});
-	});
-
-	test('createNewSession forwards seeded config to eager createSession', async () => {
-		const config = new TestConfigurationService();
-		await config.setUserConfiguration('chat.permissions.default', 'autoApprove');
-		const provider = createProvider(disposables, agentHost, undefined, { configurationService: config });
-		provider.createNewSession(URI.parse('file:///home/user/project'), provider.sessionTypes[0].id);
-		await timeout(0);
-
-		assert.deepStrictEqual(agentHost.createSessionConfigs[0]?.config, { autoApprove: 'autoApprove' });
 	});
 
 	test('createNewSession does not seed autoApprove when chat.permissions.default is the default value', () => {
@@ -1465,142 +1349,6 @@ suite('LocalAgentHostSessionsProvider', () => {
 			resolvedResource: session.resource.toString(),
 			resolvedWorkspaceLabel: 'my-project',
 		});
-	});
-
-	test('createNewSession eagerly creates the backend session with the client-allocated URI', async () => {
-		const provider = createProvider(disposables, agentHost);
-		const workspaceUri = URI.parse('file:///home/user/my-project');
-		const session = provider.createNewSession(workspaceUri, provider.sessionTypes[0].id);
-		await timeout(0); // let the eager createSession promise resolve
-
-		const rawId = session.resource.path.substring(1);
-		const expectedBackendUri = AgentSession.uri(provider.sessionTypes[0].id, rawId);
-		assert.deepStrictEqual(
-			agentHost.createdSessionUris.map(u => u.toString()),
-			[expectedBackendUri.toString()],
-			'eager createSession should be invoked with the client-allocated URI',
-		);
-		assert.strictEqual(
-			agentHost.sessionSubscribeCounts.get(expectedBackendUri.toString()),
-			1,
-			'a state subscription should be held while the new session view is active',
-		);
-	});
-
-	test('createNewSession disposes the previous eager backend session on workspace switch', async () => {
-		const provider = createProvider(disposables, agentHost);
-		const sessionTypeId = provider.sessionTypes[0].id;
-
-		const first = provider.createNewSession(URI.parse('file:///home/user/a'), sessionTypeId);
-		await timeout(0);
-		const firstRawId = first.resource.path.substring(1);
-		const firstBackendUri = AgentSession.uri(sessionTypeId, firstRawId);
-
-		// Switch workspace: the management layer disposes the abandoned draft
-		// (providers no longer do so implicitly), which disposes the first
-		// backend session and releases its subscription.
-		const second = provider.createNewSession(URI.parse('file:///home/user/b'), sessionTypeId);
-		provider.deleteNewSession(first.sessionId);
-		await timeout(0);
-		const secondRawId = second.resource.path.substring(1);
-		const secondBackendUri = AgentSession.uri(sessionTypeId, secondRawId);
-
-		assert.deepStrictEqual(
-			agentHost.disposedSessions.map(u => u.toString()),
-			[firstBackendUri.toString()],
-			'first backend session should be disposed when the workspace switches',
-		);
-		assert.deepStrictEqual(
-			agentHost.createdSessionUris.map(u => u.toString()),
-			[firstBackendUri.toString(), secondBackendUri.toString()],
-			'a fresh backend session should be created for the new workspace',
-		);
-	});
-
-	test('eager createSession completes on the wire before getSubscription opens', async () => {
-		// This guards against a regression where the order was flipped:
-		// `getSubscription` first → server saw `subscribe` for an unknown
-		// session → returned `AHP_SESSION_NOT_FOUND` → the client subscription
-		// entered an error state → the chat handler later treated the session
-		// as missing and re-issued `createSession`, producing a duplicate.
-		const provider = createProvider(disposables, agentHost);
-		const session = provider.createNewSession(URI.parse('file:///home/user/proj'), provider.sessionTypes[0].id);
-		await timeout(0);
-
-		const rawId = session.resource.path.substring(1);
-		const backendKey = AgentSession.uri(provider.sessionTypes[0].id, rawId).toString();
-		const ops = agentHost.wireOps.filter(op => op.endsWith(backendKey));
-		assert.deepStrictEqual(
-			ops,
-			[`createSession:${backendKey}`, `subscribe:${backendKey}`],
-			'createSession must complete before subscribe is issued',
-		);
-	});
-
-	test('no subscription is opened if eager createSession fails', async () => {
-		const provider = createProvider(disposables, agentHost);
-		// Replace the next createSession call with a rejecting one. The mock's
-		// onCreateSession hook runs after the URI is logged, so we throw from
-		// the hook to model an auth-required / network error response.
-		agentHost.onCreateSession = async () => { throw new Error('auth required'); };
-
-		const session = provider.createNewSession(URI.parse('file:///home/user/proj'), provider.sessionTypes[0].id);
-		await timeout(0);
-
-		const rawId = session.resource.path.substring(1);
-		const backendKey = AgentSession.uri(provider.sessionTypes[0].id, rawId).toString();
-		assert.strictEqual(
-			agentHost.sessionSubscribeCounts.get(backendKey),
-			undefined,
-			'no subscription should be opened when createSession rejects',
-		);
-	});
-
-	test('workspace switch mid-createSession does not open a stale subscription', async () => {
-		// Models the race where the user switches workspaces while the eager
-		// `createSession` for the previous workspace is still in flight on
-		// the wire. Providers now track multiple new sessions, so abandoning
-		// the previous draft is explicit: the management layer calls
-		// `deleteNewSession` on workspace switch. Once the parked create
-		// eventually resolves, we must not open a subscription for it — it has
-		// already been disposed.
-		const provider = createProvider(disposables, agentHost);
-		const sessionTypeId = provider.sessionTypes[0].id;
-
-		const firstCreateGate = new DeferredPromise<void>();
-		agentHost.onCreateSession = () => firstCreateGate.p;
-
-		const first = provider.createNewSession(URI.parse('file:///home/user/a'), sessionTypeId);
-		// Yield once so the eager createSession promise starts and parks at
-		// the gate; nothing else has happened yet.
-		await timeout(0);
-
-		// Switch workspace while the first createSession is still parked.
-		const second = provider.createNewSession(URI.parse('file:///home/user/b'), sessionTypeId);
-		// Abandon the first draft (what the management layer does on a
-		// workspace switch). Disposing the first NewSession clears its backend
-		// URI before the second eager-create runs.
-		provider.deleteNewSession(first.sessionId);
-		await timeout(0);
-
-		// Now release the first createSession. The async IIFE in
-		// `NewSession.eagerCreate` should observe that the backend URI no
-		// longer matches and bail without subscribing.
-		firstCreateGate.complete();
-		await timeout(0);
-
-		const firstBackendKey = AgentSession.uri(sessionTypeId, first.resource.path.substring(1)).toString();
-		const secondBackendKey = AgentSession.uri(sessionTypeId, second.resource.path.substring(1)).toString();
-		assert.strictEqual(
-			agentHost.sessionSubscribeCounts.get(firstBackendKey),
-			undefined,
-			'no subscription should be opened for the abandoned first session',
-		);
-		assert.strictEqual(
-			agentHost.sessionSubscribeCounts.get(secondBackendKey),
-			1,
-			'second session should still get its eager subscription',
-		);
 	});
 
 	// ---- Session actions -------
@@ -2034,7 +1782,7 @@ suite('LocalAgentHostSessionsProvider', () => {
 			config: provider.getSessionConfig(session.sessionId),
 		}, {
 			loading: false,
-			createdSessions: 1,
+			createdSessions: 0,
 			resolveRequests: 1,
 			config: { schema: { type: 'object', properties: {} }, values: { isolation: 'worktree' } },
 		});
@@ -2073,7 +1821,7 @@ suite('LocalAgentHostSessionsProvider', () => {
 			config: provider.getSessionConfig(session.sessionId),
 		}, {
 			loading: true,
-			createdSessions: 1,
+			createdSessions: 0,
 			resolveRequests: 1,
 			config: {
 				schema: { type: 'object', required: ['branch'], properties: { branch: { type: 'string', title: 'Branch', enum: ['main'] } } },

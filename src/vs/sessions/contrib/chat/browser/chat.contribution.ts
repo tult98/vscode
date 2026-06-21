@@ -10,7 +10,7 @@ import { localize, localize2 } from '../../../../nls.js';
 import { Action2, registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 import { Menus } from '../../../browser/menus.js';
-import { IsPhoneLayoutContext, SessionsTerminalModeEnabledContext, SessionsWelcomeVisibleContext } from '../../../common/contextkeys.js';
+import { IsPhoneLayoutContext, SessionsWelcomeVisibleContext } from '../../../common/contextkeys.js';
 import { ConfigurationScope, Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { registerWorkbenchContribution2, WorkbenchPhase } from '../../../../workbench/common/contributions.js';
 import { ISessionsService } from '../../../services/sessions/browser/sessionsService.js';
@@ -118,34 +118,6 @@ class ToggleSessionViewModeAction extends Action2 {
 }
 
 registerAction2(ToggleSessionViewModeAction);
-
-
-/**
- * Global toggle that switches every eligible session's center pane between the
- * GUI chat and an embedded native `claude` CLI terminal. Exposed as a command
- * so it is reachable from the command palette and keybindings.
- */
-class ToggleSessionTerminalModeAction extends Action2 {
-
-	constructor() {
-		super({
-			id: 'agentSession.toggleTerminalMode',
-			title: localize2('toggleTerminalMode', "Use Claude CLI"),
-			f1: true,
-			icon: Codicon.terminal,
-			toggled: {
-				condition: SessionsTerminalModeEnabledContext,
-				title: localize('usingClaudeCli', "Using Claude CLI"),
-			},
-		});
-	}
-
-	override run(accessor: ServicesAccessor): void {
-		accessor.get(ISessionTerminalModeService).toggle();
-	}
-}
-
-registerAction2(ToggleSessionTerminalModeAction);
 
 
 // register actions

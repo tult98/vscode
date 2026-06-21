@@ -5,10 +5,8 @@
 
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { IObservable, observableValue } from '../../../../base/common/observable.js';
-import { IContextKey, IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
-import { SessionsTerminalModeEnabledContext } from '../../../common/contextkeys.js';
 
 export const ISessionTerminalModeService = createDecorator<ISessionTerminalModeService>('sessionTerminalModeService');
 
@@ -42,19 +40,13 @@ export class SessionTerminalModeService extends Disposable implements ISessionTe
 	private readonly _terminalMode = observableValue<boolean>(this, false);
 	readonly terminalMode: IObservable<boolean> = this._terminalMode;
 
-	private readonly _contextKey: IContextKey<boolean>;
-
 	constructor(
 		@IStorageService private readonly storageService: IStorageService,
-		@IContextKeyService contextKeyService: IContextKeyService,
 	) {
 		super();
 
-		this._contextKey = SessionsTerminalModeEnabledContext.bindTo(contextKeyService);
-
 		const initial = this.storageService.getBoolean(SessionTerminalModeService.STORAGE_KEY, StorageScope.APPLICATION, false);
 		this._terminalMode.set(initial, undefined);
-		this._contextKey.set(initial);
 	}
 
 	toggle(): void {
@@ -66,7 +58,6 @@ export class SessionTerminalModeService extends Disposable implements ISessionTe
 			return;
 		}
 		this._terminalMode.set(enabled, undefined);
-		this._contextKey.set(enabled);
 		this.storageService.store(SessionTerminalModeService.STORAGE_KEY, enabled, StorageScope.APPLICATION, StorageTarget.USER);
 	}
 }
