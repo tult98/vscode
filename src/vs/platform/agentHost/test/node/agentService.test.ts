@@ -707,29 +707,6 @@ suite('AgentService (node dispatcher)', () => {
 		});
 	});
 
-	// ---- warmSession ----------------------------------------------------
-
-	suite('warmSession', () => {
-
-		test('dispatches to the provider\'s ensureMaterialized', async () => {
-			service.registerProvider(copilotAgent);
-
-			const session = await service.createSession({ provider: 'copilot' });
-			await service.warmSession(session);
-
-			assert.deepStrictEqual(
-				copilotAgent.ensureMaterializedCalls.map(uri => uri.toString()),
-				[session.toString()],
-			);
-		});
-
-		test('is a no-op when no provider handles the session', async () => {
-			// No provider registered → no provider resolves → must not throw.
-			const unknownSession = URI.from({ scheme: 'unknown', path: '/nope' });
-			await service.warmSession(unknownSession);
-		});
-	});
-
 	// ---- listSessions / listModels --------------------------------------
 
 	suite('aggregation', () => {

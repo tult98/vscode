@@ -414,14 +414,6 @@ export interface IChatSessionContentProvider {
 	 * sessions handled by this content provider.
 	 */
 	provideChatInputCompletionTriggerCharacters?(): Promise<readonly string[]>;
-
-	/**
-	 * Optional. Warm the session ahead of the first request so that
-	 * subsequent {@link provideChatInputCompletions} calls can return
-	 * session-scoped completions (e.g. the agent's slash commands / skills).
-	 * Best-effort and idempotent; failures should be swallowed.
-	 */
-	prewarmChatSession?(sessionResource: URI): Promise<void>;
 }
 
 /**
@@ -722,16 +714,6 @@ export interface IChatSessionsService {
 	 * workbench's default in-process providers should be used.
 	 */
 	provideChatInputCompletions(sessionResource: URI, params: IChatInputCompletionsParams, token: CancellationToken): Promise<IChatInputCompletionsResult | undefined>;
-
-	/**
-	 * Warm the chat session identified by `sessionResource` so its provider
-	 * can surface session-scoped completions (e.g. the agent's slash commands
-	 * / skills) before the user composes a request. Delegates to the
-	 * registered {@link IChatSessionContentProvider.prewarmChatSession}; a
-	 * no-op when no provider is available or the provider does not implement
-	 * it. Best-effort and idempotent.
-	 */
-	prewarmChatSession(sessionResource: URI): Promise<void>;
 
 	/**
 	 * Trigger characters announced by the content provider for the given

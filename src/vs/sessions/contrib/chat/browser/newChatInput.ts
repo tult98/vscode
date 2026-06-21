@@ -40,8 +40,6 @@ import { getSimpleEditorOptions } from '../../../../workbench/contrib/codeEditor
 import { NewChatContextAttachments } from './newChatContextAttachments.js';
 import { SessionTypePicker } from './sessionTypePicker.js';
 import { IActiveSession } from '../../../services/sessions/common/sessionsManagement.js';
-import { IChatSessionsService, isAgentHostTarget } from '../../../../workbench/contrib/chat/common/chatSessionsService.js';
-import { getChatSessionType } from '../../../../workbench/contrib/chat/common/model/chatUri.js';
 import { MobileSessionTypePicker } from './mobile/mobileSessionTypePicker.js';
 import { installMobileChipLaneScroll } from '../../../browser/parts/mobile/mobileChipLaneScroll.js';
 import { IWorkbenchLayoutService } from '../../../../workbench/services/layout/browser/layoutService.js';
@@ -154,9 +152,6 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 	private _agentHostInputCompletionHandler: AgentHostInputCompletionHandler | undefined;
 	private readonly _scopedInstantiationService: IInstantiationService;
 
-	/** Agent-host draft sessions already warmed (see {@link _prewarmActiveSession}), keyed by resource. */
-	private readonly _prewarmedSessions = new Set<string>();
-
 	// Input state
 	private _draftState: IDraftState | undefined = {
 		inputText: '',
@@ -190,7 +185,6 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 		@IStorageService private readonly storageService: IStorageService,
 		@IKeybindingService private readonly keybindingService: IKeybindingService,
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
-		@IChatSessionsService private readonly chatSessionsService: IChatSessionsService,
 	) {
 		super();
 		this._scopedInstantiationService = this._register(this.instantiationService.createChild(new ServiceCollection(
@@ -223,13 +217,6 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 			const isLoading = this.options.loading.read(reader);
 			this._loadingSpinner?.classList.toggle('visible', isLoading);
 			this._updateSendButtonState();
-		}));
-		// Warm the draft session as soon as it is known (not only on input
-		// focus) so the agent's slash commands / skills are ready by the time
-		// the user starts typing. Deduped per resource in `_prewarmActiveSession`.
-		this._register(autorun(reader => {
-			this.options.session.read(reader);
-			this._prewarmActiveSession();
 		}));
 	}
 
@@ -415,7 +402,6 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 
 		this._register(this._editor.onDidFocusEditorWidget(() => {
 			this._onDidFocus.fire();
-			this._prewarmActiveSession();
 		}));
 		this._register(this._editor.onDidBlurEditorWidget(() => this._onDidBlur.fire()));
 
@@ -573,30 +559,6 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 			inputText: this._editor?.getModel()?.getValue() ?? '',
 			attachments: [...this._contextAttachments.attachments],
 		};
-	}
-
-	/**
-	 * Best-effort warm-up of the active agent-host (draft) session when the
-	 * input gains focus, so the agent's slash commands / skills populate the
-	 * `/` picker before the first message is composed. Runs at most once per
-	 * session resource.
-	 */
-	private _prewarmActiveSession(): void {
-		const session = this.options.session.get();
-		const sessionResource = session?.resource;
-		if (!sessionResource || !isAgentHostTarget(getChatSessionType(sessionResource))) {
-			return;
-		}
-		const key = sessionResource.toString();
-		if (this._prewarmedSessions.has(key)) {
-			return;
-		}
-		this._prewarmedSessions.add(key);
-		this.chatSessionsService.prewarmChatSession(sessionResource).catch(err => {
-			// Best-effort: drop the marker so a later focus can retry.
-			this._prewarmedSessions.delete(key);
-			this.logService.trace('[NewChatInput] prewarmChatSession failed', err);
-		});
 	}
 
 	private _toHistoryEntry(draft: IDraftState): IChatModelInputState {

@@ -827,14 +827,6 @@ export class RemoteAgentHostProtocolClient extends Disposable implements IAgentC
 		await this._sendRequest('disposeSession', { channel: session.toString() });
 	}
 
-	/**
-	 * Warm a session on the remote agent host so its customizations (slash
-	 * commands / skills) become queryable before the first message.
-	 */
-	async warmSession(session: URI): Promise<void> {
-		await this._sendRequest('warmSession', { channel: session.toString() });
-	}
-
 	async createChat(session: URI, chat: URI, options?: IAgentCreateChatOptions): Promise<void> {
 		await this._sendRequest('createChat', {
 			channel: session.toString(),

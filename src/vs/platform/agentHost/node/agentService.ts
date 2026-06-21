@@ -846,12 +846,6 @@ export class AgentService extends Disposable implements IAgentService {
 		return this._completions.triggerCharacters;
 	}
 
-	async warmSession(session: URI): Promise<void> {
-		this._logService.trace(`[AgentService] warmSession: ${session.toString()}`);
-		const provider = this._findProviderForSession(session);
-		await provider?.ensureMaterialized?.(session);
-	}
-
 	async disposeSession(session: URI): Promise<void> {
 		this._logService.trace(`[AgentService] disposeSession: ${session.toString()}`);
 		const provider = this._findProviderForSession(session);

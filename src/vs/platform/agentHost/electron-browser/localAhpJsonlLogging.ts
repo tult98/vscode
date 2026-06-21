@@ -23,7 +23,6 @@ const REQUEST_METHODS: ReadonlySet<string> = new Set<keyof IAgentService>([
 	'completions',
 	'getCompletionTriggerCharacters',
 	'disposeSession',
-	'warmSession',
 	'createTerminal',
 	'disposeTerminal',
 	'shutdown',

@@ -16,7 +16,7 @@ import { ChatWidget } from '../../../../workbench/contrib/chat/browser/widget/ch
 import { IChatModelReference, IChatService } from '../../../../workbench/contrib/chat/common/chatService/chatService.js';
 import { ChatAgentLocation, ChatModeKind } from '../../../../workbench/contrib/chat/common/constants.js';
 import { getChatSessionType } from '../../../../workbench/contrib/chat/common/model/chatUri.js';
-import { IChatSessionsService, isAgentHostTarget, localChatSessionType } from '../../../../workbench/contrib/chat/common/chatSessionsService.js';
+import { IChatSessionsService, localChatSessionType } from '../../../../workbench/contrib/chat/common/chatSessionsService.js';
 import { AbstractChatView, ChatViewKind, IChatViewOptions } from '../../../browser/parts/chatView.js';
 import { IChat } from '../../../services/sessions/common/session.js';
 import { IChatViewFactory } from '../../../services/chatView/browser/chatViewFactory.js';
@@ -115,13 +115,6 @@ export class ChatView extends AbstractChatView {
 	/** Whether this view currently represents the active session. */
 	private _isActive = true;
 
-	/**
-	 * Backend sessions already warmed (via {@link IChatSessionsService.prewarmChatSession})
-	 * so each is warmed at most once per loaded chat. Cleared when the chat
-	 * model changes.
-	 */
-	private readonly _prewarmedSessions = new Set<string>();
-
 	constructor(
 		@IInstantiationService instantiationService: IInstantiationService,
 		@IContextKeyService contextKeyService: IContextKeyService,
@@ -161,12 +154,6 @@ export class ChatView extends AbstractChatView {
 		));
 		this._widget.render(this.element);
 		this._widget.setVisible(true);
-
-		// Warm agent-host sessions when the user engages the chat input, so the
-		// agent's slash commands / skills are available in the `/` picker before
-		// the first message is sent (they are sourced from the agent's live
-		// query, which the host only materializes lazily on warm or first send).
-		this._register(this._widget.onDidFocus(() => this._prewarmActiveSession()));
 
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration(AGENT_SESSIONS_SCOPED_INPUT_HISTORY_SETTING)) {
@@ -225,10 +212,6 @@ export class ChatView extends AbstractChatView {
 			this._modelRef.value = ref;
 			this._updateWidgetLockState(getChatSessionType(ref.object.sessionResource));
 			this._widget.setModel(ref.object);
-			// Warm the session as soon as it is loaded (not only on input
-			// focus) so the agent's slash commands / skills are ready by the
-			// time the user reaches for the `/` picker.
-			this._prewarmActiveSession();
 		}, err => {
 			if (!token.isCancellationRequested) {
 				this.logService.error('[ChatView] Failed to load chat model for chat', err);
@@ -248,29 +231,6 @@ export class ChatView extends AbstractChatView {
 		this._widget.clear().catch(err => this.logService.error('[ChatView] Failed to clear chat widget', err));
 		this._widget.setModel(undefined);
 		this._modelRef.clear();
-		this._prewarmedSessions.clear();
-	}
-
-	/**
-	 * Best-effort warm-up of the active agent-host session so its slash
-	 * commands / skills populate the input completions before the first send.
-	 * Runs at most once per session resource while a chat is loaded.
-	 */
-	private _prewarmActiveSession(): void {
-		const sessionResource = this._widget.viewModel?.model.sessionResource;
-		if (!sessionResource || !isAgentHostTarget(getChatSessionType(sessionResource))) {
-			return;
-		}
-		const key = sessionResource.toString();
-		if (this._prewarmedSessions.has(key)) {
-			return;
-		}
-		this._prewarmedSessions.add(key);
-		this.chatSessionsService.prewarmChatSession(sessionResource).catch(err => {
-			// Best-effort: drop the marker so a later focus can retry.
-			this._prewarmedSessions.delete(key);
-			this.logService.trace('[ChatView] prewarmChatSession failed', err);
-		});
 	}
 
 	private _applyHistoryKey(): void {

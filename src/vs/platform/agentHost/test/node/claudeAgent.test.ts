@@ -1158,37 +1158,6 @@ suite('ClaudeAgent', () => {
 		});
 	});
 
-	test('ensureMaterialized warms a provisional session and is idempotent', async () => {
-		// `ensureMaterialized` (the warm-on-focus path) must promote a
-		// provisional session to a live one — the same materialization the
-		// first `sendMessage` performs — so session customizations (slash
-		// commands / skills) become queryable before any message is sent.
-		// A second warm must not re-materialize.
-		const { agent, sdk } = createTestContext(disposables);
-		await agent.authenticate(GITHUB_COPILOT_PROTECTED_RESOURCE.resource, 'tok');
-
-		const result = await agent.createSession({ workingDirectory: URI.parse('file:///workspace') });
-		const startupBeforeWarm = sdk.startupCallCount;
-
-		await agent.ensureMaterialized(result.session);
-		const startupAfterFirstWarm = sdk.startupCallCount;
-
-		await agent.ensureMaterialized(result.session);
-		const startupAfterSecondWarm = sdk.startupCallCount;
-
-		assert.deepStrictEqual({
-			startupBeforeWarm,
-			materializedAfterWarm: agent.getSessionForTesting(result.session) !== undefined,
-			startedUpExactlyOnce: startupAfterFirstWarm === startupBeforeWarm + 1,
-			secondWarmIsNoop: startupAfterSecondWarm === startupAfterFirstWarm,
-		}, {
-			startupBeforeWarm: 0,
-			materializedAfterWarm: true,
-			startedUpExactlyOnce: true,
-			secondWarmIsNoop: true,
-		});
-	});
-
 	test('createProvisional creates a session without SDK startup contact', async () => {
 		const { sdk, instantiationService } = createTestContext(disposables);
 

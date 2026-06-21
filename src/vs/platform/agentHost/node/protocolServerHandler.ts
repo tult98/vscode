@@ -1007,10 +1007,6 @@ export class ProtocolServerHandler extends Disposable {
 			await this._agentService.disposeSession(URI.parse(params.channel));
 			return null;
 		},
-		warmSession: async (_client, params) => {
-			await this._agentService.warmSession(URI.parse(params.channel));
-			return null;
-		},
 		createChat: async (_client, params) => {
 			const state = this._stateManager.getSessionState(params.channel);
 			if (!state) {

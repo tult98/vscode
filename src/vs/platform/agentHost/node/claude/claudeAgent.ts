@@ -1088,27 +1088,6 @@ export class ClaudeAgent extends Disposable implements IAgent {
 		});
 	}
 
-	async ensureMaterialized(sessionUri: URI): Promise<void> {
-		// Warm a session so its SDK Query is live and the SDK-resolved
-		// customization tier (built-in commands + user skills, surfaced via
-		// `getSessionCustomizations`) becomes queryable before the first
-		// message is sent. Shares the `_sessionSequencer` scope with
-		// `sendMessage` so a concurrent first send collapses into a single
-		// materialize and `isPipelineReady` short-circuits a redundant warm.
-		const sessionId = AgentSession.id(sessionUri);
-		return this._sessionSequencer.queue(sessionId, async () => {
-			const existing = this._findAnySession(sessionId);
-			if (existing?.isPipelineReady) {
-				return;
-			}
-			if (existing) {
-				await this._materializeProvisional(sessionId);
-			} else {
-				await this._resumeSession(sessionId, sessionUri);
-			}
-		});
-	}
-
 	respondToPermissionRequest(requestId: string, approved: boolean): void {
 		// `requestId` is the SDK's `tool_use_id` — globally unique, so a
 		// single matching session is all we need. Silent on miss

@@ -966,16 +966,6 @@ export interface IAgent {
 	sendMessage(session: URI, prompt: string, attachments?: readonly MessageAttachment[], turnId?: string, chat?: URI): Promise<void>;
 
 	/**
-	 * Warm a session ahead of the first message by performing the same lazy
-	 * materialization `sendMessage` would, without sending anything. Used so
-	 * that session-scoped customizations (e.g. the agent's slash commands /
-	 * skills surfaced via {@link getSessionCustomizations}) become queryable
-	 * before the user composes their first request. Idempotent and safe to
-	 * call repeatedly; providers that need no warming simply omit it.
-	 */
-	ensureMaterialized?(session: URI): Promise<void>;
-
-	/**
 	 * Create an additional chat within an existing session, backed by a new
 	 * conversation that shares the session's scope (working directory, model,
 	 * agent, customizations). Optional: harnesses that do not support multiple
@@ -1249,15 +1239,6 @@ export interface IAgentService {
 	/** Dispose a session in the agent host, freeing SDK resources. */
 	disposeSession(session: URI): Promise<void>;
 
-	/**
-	 * Warm a session ahead of its first message by triggering the same lazy
-	 * materialization `sendMessage` would, without sending anything. Lets
-	 * clients surface session-scoped customizations (the agent's slash
-	 * commands / skills) before the user composes a request. Idempotent; a
-	 * no-op for providers whose sessions need no warming.
-	 */
-	warmSession(session: URI): Promise<void>;
-
 	/** Create a new terminal on the agent host. */
 	createTerminal(params: CreateTerminalParams): Promise<void>;
 
@@ -1511,14 +1492,6 @@ export interface IAgentConnection {
 	 */
 	getCompletionTriggerCharacters(): Promise<readonly string[]>;
 	disposeSession(session: URI): Promise<void>;
-
-	/**
-	 * Warm a session ahead of its first message, triggering the same lazy
-	 * materialization the first `sendMessage` would so session-scoped
-	 * customizations (the agent's slash commands / skills) become queryable
-	 * before the user composes a request. Idempotent.
-	 */
-	warmSession(session: URI): Promise<void>;
 
 	/**
 	 * Create an additional peer chat inside an existing session. `chat` is a
