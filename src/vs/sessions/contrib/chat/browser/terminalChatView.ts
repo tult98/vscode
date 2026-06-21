@@ -14,7 +14,7 @@ import { ITerminalInstance } from '../../../../workbench/contrib/terminal/browse
 import { AbstractChatView, ChatViewKind } from '../../../browser/parts/chatView.js';
 import { IChat, SessionStatus } from '../../../services/sessions/common/session.js';
 import { IActiveSession } from '../../../services/sessions/common/sessionsManagement.js';
-import { ISessionTerminalService } from '../../../services/chatView/browser/sessionTerminalService.js';
+import { getNativeTerminalLaunch, ISessionTerminalService } from '../../../services/chatView/browser/sessionTerminalService.js';
 
 /**
  * A session view that hosts an embedded terminal running the native `claude`
@@ -45,6 +45,8 @@ export class TerminalChatView extends AbstractChatView {
 	private _attachedSessionId: string | undefined;
 	/** The session whose terminal is being fetched, to avoid concurrent fetches. */
 	private _pendingSessionId: string | undefined;
+	/** Sessions that have already fallen back to a fresh `claude` after a failed resume (one retry only). */
+	private readonly _resumeFellBack = new Set<string>();
 
 	private _lastDimension: Dimension | undefined;
 	private _isActive = true;
@@ -87,7 +89,7 @@ export class TerminalChatView extends AbstractChatView {
 		}));
 	}
 
-	private _ensureTerminalAttached(session: IActiveSession): void {
+	private _ensureTerminalAttached(session: IActiveSession, fresh = false): void {
 		const sessionId = session.sessionId;
 		if (this._attachedSessionId === sessionId && this._currentInstance && !this._currentInstance.isDisposed) {
 			return; // already showing this session's terminal
@@ -97,7 +99,7 @@ export class TerminalChatView extends AbstractChatView {
 		}
 		this._pendingSessionId = sessionId;
 
-		const promise = this.sessionTerminalService.getOrCreateTerminal(session).then(instance => {
+		const promise = this.sessionTerminalService.getOrCreateTerminal(session, fresh).then(instance => {
 			if (this._currentSessionId !== sessionId) {
 				return; // switched to a different session while awaiting
 			}
@@ -105,7 +107,7 @@ export class TerminalChatView extends AbstractChatView {
 				this._showMessage(localize('claudeTerminalUnavailable', "The Claude terminal is unavailable for this session."));
 				return;
 			}
-			this._attachInstance(instance, sessionId, this._sessionDisposables.value);
+			this._attachInstance(instance, session, this._sessionDisposables.value);
 		}, err => {
 			this.logService.error('[TerminalChatView] Failed to create terminal for session', err);
 			if (this._currentSessionId === sessionId) {
@@ -122,7 +124,8 @@ export class TerminalChatView extends AbstractChatView {
 		this.showProgressWhile(promise, 800);
 	}
 
-	private _attachInstance(instance: ITerminalInstance, sessionId: string, store: DisposableStore | undefined): void {
+	private _attachInstance(instance: ITerminalInstance, session: IActiveSession, store: DisposableStore | undefined): void {
+		const sessionId = session.sessionId;
 		this._detachCurrent();
 		this._clearMessage();
 
@@ -151,14 +154,29 @@ export class TerminalChatView extends AbstractChatView {
 
 		// If the pty exits (e.g. the user runs /exit or `claude` was not found),
 		// drop it and surface a message in place.
-		store?.add(instance.onExit(() => {
-			if (this._currentInstance === instance) {
-				this._currentInstance = undefined;
-				this._attachedSessionId = undefined;
-				if (this._currentSessionId === sessionId) {
-					this._showMessage(localize('claudeTerminalExited', "The Claude terminal exited. Reload the window to restart it."));
-				}
+		store?.add(instance.onExit(exit => {
+			if (this._currentInstance !== instance) {
+				return;
 			}
+			this._currentInstance = undefined;
+			this._attachedSessionId = undefined;
+			if (this._currentSessionId !== sessionId) {
+				return;
+			}
+			// `claude --resume <id>` exits non-zero when the CLI cannot load the
+			// session's transcript (e.g. an empty/zero-turn session). Fall back
+			// once to a fresh `claude` in the same cwd so the terminal still
+			// opens working. A user-initiated `/exit` returns 0, so it does not
+			// trigger this.
+			const exitedWithError = typeof exit === 'number' && exit !== 0;
+			const wasResume = !!getNativeTerminalLaunch(session)?.resumeSessionId;
+			if (exitedWithError && wasResume && !this._resumeFellBack.has(sessionId)) {
+				this._resumeFellBack.add(sessionId);
+				this.sessionTerminalService.disposeTerminal(sessionId);
+				this._ensureTerminalAttached(session, /*fresh*/ true);
+				return;
+			}
+			this._showMessage(localize('claudeTerminalExited', "The Claude terminal exited. Reload the window to restart it."));
 		}));
 	}
 

@@ -106,8 +106,12 @@ export interface ISessionTerminalService {
 	 * (see {@link getNativeTerminalLaunch}). Created sessions resume their
 	 * conversation; a brand-new session launches a fresh `claude` (optionally
 	 * seeded with the prompt captured by {@link openNewSessionTerminal}).
+	 *
+	 * Pass `fresh` to force a brand-new `claude` (no `--resume`) even for a
+	 * created session — used to recover when resuming a session whose transcript
+	 * the CLI cannot load (`claude --resume <id>` exited non-zero).
 	 */
-	getOrCreateTerminal(session: IActiveSession): Promise<ITerminalInstance | undefined>;
+	getOrCreateTerminal(session: IActiveSession, fresh?: boolean): Promise<ITerminalInstance | undefined>;
 
 	/**
 	 * Switches a brand-new (untitled) session to the terminal, seeding `claude`
@@ -191,7 +195,7 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
 		return instance && !instance.isDisposed ? instance : undefined;
 	}
 
-	async getOrCreateTerminal(session: IActiveSession): Promise<ITerminalInstance | undefined> {
+	async getOrCreateTerminal(session: IActiveSession, fresh?: boolean): Promise<ITerminalInstance | undefined> {
 		const launch = getNativeTerminalLaunch(session);
 		if (!launch) {
 			return undefined;
@@ -202,6 +206,9 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
 			return existing;
 		}
 
+		// When recovering from a failed resume, ignore the resume id and launch a
+		// brand-new `claude` instead.
+		const resumeSessionId = fresh ? undefined : launch.resumeSessionId;
 		const executable = this.configurationService.getValue<string>(AgentHostClaudeExecutablePathSettingId) || 'claude';
 		const initialPrompt = this._initialPrompts.get(session.sessionId);
 		const config: IShellLaunchConfig = {
@@ -209,8 +216,8 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
 			// Resume the SDK-started conversation for created sessions; for a
 			// brand-new session launch a fresh `claude`, seeded with the prompt the
 			// user submitted in the composer when present.
-			args: launch.resumeSessionId
-				? ['--resume', launch.resumeSessionId]
+			args: resumeSessionId
+				? ['--resume', resumeSessionId]
 				: (initialPrompt ? [initialPrompt] : []),
 			cwd: launch.cwd,
 			name: 'Claude',
@@ -224,9 +231,13 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
 			hideFromUser: true,
 			isFeatureTerminal: true,
 			forcePersist: true,
+			// This terminal surfaces its own exit state through {@link TerminalChatView};
+			// suppress the global "terminated with exit code" notification it would
+			// otherwise leak (it is never opened directly by the user).
+			ignoreShellProcessExitNotification: true,
 			reconnectionProperties: {
 				ownerId: SESSION_TERMINAL_OWNER,
-				data: { sessionId: session.sessionId, resumeSessionId: launch.resumeSessionId } satisfies ISessionTerminalReconnectionData,
+				data: { sessionId: session.sessionId, resumeSessionId } satisfies ISessionTerminalReconnectionData,
 			},
 		};
 

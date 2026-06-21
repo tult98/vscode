@@ -18,7 +18,7 @@ import { ChatContentMarkdownRenderer } from '../../../../../workbench/contrib/ch
 import { DiffEditorPool, EditorPool } from '../../../../../workbench/contrib/chat/browser/widget/chatContentParts/chatContentCodePools.js';
 import { IMarkdownDiffBlockData, MarkdownDiffBlockPart, parseUnifiedDiff } from '../../../../../workbench/contrib/chat/browser/widget/chatContentParts/chatDiffBlockPart.js';
 import { codeblockHasClosingBackticks } from '../../../../../workbench/contrib/chat/browser/widget/chatContentParts/chatMarkdownContentPart.js';
-import { CodeBlockPart, ICodeBlockData } from '../../../../../workbench/contrib/chat/browser/widget/chatContentParts/codeBlockPart.js';
+import { ChatCodeBlockContentProvider, CodeBlockPart, ICodeBlockData } from '../../../../../workbench/contrib/chat/browser/widget/chatContentParts/codeBlockPart.js';
 import { IChatRendererDelegate } from '../../../../../workbench/contrib/chat/browser/widget/chatListRenderer.js';
 import { ChatEditorOptions } from '../../../../../workbench/contrib/chat/browser/widget/chatOptions.js';
 import { IChatMarkdownContent, IChatThinkingPart, IChatToolInvocation, IChatToolInvocationSerialized } from '../../../../../workbench/contrib/chat/common/chatService/chatService.js';
@@ -83,6 +83,11 @@ export class ClaudeTranscriptRenderer extends Disposable {
 		};
 		this._editorPool = this._register(this._scopedInstaService.createInstance(EditorPool, editorOptions, delegate, undefined, true));
 		this._diffEditorPool = this._register(this._scopedInstaService.createInstance(DiffEditorPool, editorOptions, delegate, undefined, true));
+
+		// Resolve `vscode-chat-code-block:` models created by CodeBlockPart. Without this,
+		// TextModelResolverService cannot resolve those URIs (the upstream chat list renderer
+		// registers the same provider; it isn't instantiated in the Agent Sessions window).
+		this._register(this._scopedInstaService.createInstance(ChatCodeBlockContentProvider));
 	}
 
 	/** Update the available width and re-lay-out any code/diff editors in use. */
