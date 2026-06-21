@@ -3,10 +3,12 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { Codicon } from '../../../../base/common/codicons.js';
 import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
 import { ServicesAccessor } from '../../../../editor/browser/editorExtensions.js';
 import { localize, localize2 } from '../../../../nls.js';
 import { Action2, registerAction2 } from '../../../../platform/actions/common/actions.js';
+import { SessionsTerminalModeEnabledContext } from '../../../common/contextkeys.js';
 import { ConfigurationScope, Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { registerWorkbenchContribution2, WorkbenchPhase } from '../../../../workbench/common/contributions.js';
 import { ISessionsService } from '../../../services/sessions/browser/sessionsService.js';
@@ -28,6 +30,8 @@ import { ICustomizationHarnessService } from '../../../../workbench/contrib/chat
 import { SessionsAICustomizationWorkspaceService } from './aiCustomizationWorkspaceService.js';
 import { SessionsCustomizationHarnessService } from './customizationHarnessService.js';
 import { IChatViewFactory } from '../../../services/chatView/browser/chatViewFactory.js';
+import { ISessionTerminalModeService, SessionTerminalModeService } from '../../../services/chatView/browser/sessionTerminalMode.js';
+import { ISessionTerminalService, SessionTerminalService } from '../../../services/chatView/browser/sessionTerminalService.js';
 import { ChatViewFactory } from './chatView.js';
 import { CHAT_CATEGORY } from '../../../../workbench/contrib/chat/browser/actions/chatActions.js';
 import { AccessibleViewRegistry } from '../../../../platform/accessibility/browser/accessibleViewRegistry.js';
@@ -81,6 +85,34 @@ class NewChatInSessionsWindowAction extends Action2 {
 registerAction2(NewChatInSessionsWindowAction);
 
 
+/**
+ * Global toggle that switches every eligible session's center pane between the
+ * GUI chat and an embedded native `claude` CLI terminal. Exposed as a command
+ * so it is reachable from the command palette and keybindings.
+ */
+class ToggleSessionTerminalModeAction extends Action2 {
+
+	constructor() {
+		super({
+			id: 'agentSession.toggleTerminalMode',
+			title: localize2('toggleTerminalMode', "Use Claude CLI"),
+			f1: true,
+			icon: Codicon.terminal,
+			toggled: {
+				condition: SessionsTerminalModeEnabledContext,
+				title: localize('usingClaudeCli', "Using Claude CLI"),
+			},
+		});
+	}
+
+	override run(accessor: ServicesAccessor): void {
+		accessor.get(ISessionTerminalModeService).toggle();
+	}
+}
+
+registerAction2(ToggleSessionTerminalModeAction);
+
+
 // register actions
 registerAction2(BranchChatSessionAction);
 
@@ -97,6 +129,8 @@ registerSingleton(ISessionsTasksService, SessionsTasksService, InstantiationType
 registerSingleton(IAICustomizationWorkspaceService, SessionsAICustomizationWorkspaceService, InstantiationType.Delayed);
 registerSingleton(ICustomizationHarnessService, SessionsCustomizationHarnessService, InstantiationType.Delayed);
 registerSingleton(IChatViewFactory, ChatViewFactory, InstantiationType.Delayed);
+registerSingleton(ISessionTerminalModeService, SessionTerminalModeService, InstantiationType.Delayed);
+registerSingleton(ISessionTerminalService, SessionTerminalService, InstantiationType.Delayed);
 
 // register accessibility help
 AccessibleViewRegistry.register(new SessionsChatAccessibilityHelp());

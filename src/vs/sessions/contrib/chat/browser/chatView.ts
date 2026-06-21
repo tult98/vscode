@@ -22,6 +22,7 @@ import { IChat } from '../../../services/sessions/common/session.js';
 import { IChatViewFactory } from '../../../services/chatView/browser/chatViewFactory.js';
 import { NewChatWidget } from './newChatWidget.js';
 import { NewChatInSessionWidget } from './newChatInSessionWidget.js';
+import { TerminalChatView } from './terminalChatView.js';
 import { AGENT_SESSIONS_SCOPED_INPUT_HISTORY_SETTING } from './sessionsChatHistory.js';
 import { activeSessionViewBackground, activeSessionViewForeground, agentsPanelBackground, inactiveSessionViewBackground, inactiveSessionViewForeground } from '../../../common/theme.js';
 import { isEqual } from '../../../../base/common/resources.js';
@@ -297,5 +298,9 @@ export class ChatViewFactory implements IChatViewFactory {
 
 	createChatView(): AbstractChatView {
 		return this.instantiationService.createInstance(ChatView);
+	}
+
+	createTerminalView(): AbstractChatView {
+		return this.instantiationService.createInstance(TerminalChatView);
 	}
 }

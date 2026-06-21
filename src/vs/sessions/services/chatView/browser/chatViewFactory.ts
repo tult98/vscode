@@ -28,4 +28,11 @@ export interface IChatViewFactory {
 	 * Creates a chat view that hosts a chat widget for an active session.
 	 */
 	createChatView(): AbstractChatView;
+
+	/**
+	 * Creates a view that hosts an embedded terminal running the native
+	 * `claude` CLI (`claude --resume <id>`) for an active session. Used when
+	 * the global "terminal mode" toggle is on.
+	 */
+	createTerminalView(): AbstractChatView;
 }
