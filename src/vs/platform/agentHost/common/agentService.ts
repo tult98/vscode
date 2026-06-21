@@ -71,6 +71,13 @@ export const AgentHostCustomTerminalToolEnabledSettingId = 'chat.agentHost.custo
 export const AgentHostClaudeAgentEnabledSettingId = 'chat.agentHost.claudeAgent.enabled';
 
 /**
+ * Setting id for the native `claude` CLI executable used by the Agents Window's
+ * terminal mode (the embedded terminal that runs `claude --resume <id>` instead
+ * of the GUI chat). Defaults to `'claude'` (resolved on PATH).
+ */
+export const AgentHostClaudeExecutablePathSettingId = 'chat.agentHost.claudeAgent.executablePath';
+
+/**
  * Configuration key controlling whether the Codex provider is registered in
  * the agent host process. When `false` (the default), the agent host skips
  * registering the Codex provider regardless of SDK availability. The agent

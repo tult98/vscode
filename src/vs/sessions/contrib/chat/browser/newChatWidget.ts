@@ -23,6 +23,8 @@ import { IPreferredSessionType } from './sessionTypePicker.js';
 import { NewChatInputWidget } from './newChatInput.js';
 import { sessionHasNoSelectableModel } from './modelPicker.js';
 import { ISessionsProvidersService } from '../../../services/sessions/browser/sessionsProvidersService.js';
+import { ISessionTerminalModeService } from '../../../services/chatView/browser/sessionTerminalMode.js';
+import { ISessionTerminalService } from '../../../services/chatView/browser/sessionTerminalService.js';
 import { NoAgentHostEmptyState } from './noAgentHostEmptyState.js';
 import { IChatRequestVariableEntry } from '../../../../workbench/contrib/chat/common/attachments/chatVariableEntries.js';
 import { IAgentHostFilterService } from '../../../services/agentHostFilter/common/agentHostFilter.js';
@@ -67,6 +69,8 @@ export class NewChatWidget extends Disposable {
 		@IAquariumService private readonly aquariumService: IAquariumService,
 		@IAgentHostFilterService private readonly agentHostFilterService: IAgentHostFilterService,
 		@ISessionsProvidersService private readonly sessionsProvidersService: ISessionsProvidersService,
+		@ISessionTerminalModeService private readonly sessionTerminalModeService: ISessionTerminalModeService,
+		@ISessionTerminalService private readonly sessionTerminalService: ISessionTerminalService,
 	) {
 		super();
 		this._renderHarnessPickerInControls = this.options.renderSessionTypePickerInControls.get();
@@ -385,6 +389,14 @@ export class NewChatWidget extends Disposable {
 		const session = this._session.get();
 		if (!session) {
 			this._workspacePicker.showPicker();
+			return;
+		}
+
+		// In terminal mode, submitting from the composer hands the session off to
+		// the native `claude` CLI (seeded with this message) instead of sending an
+		// SDK request — the session view then flips to the terminal.
+		if (this.sessionTerminalModeService.terminalMode.get()) {
+			this.sessionTerminalService.openNewSessionTerminal(session, query);
 			return;
 		}
 
