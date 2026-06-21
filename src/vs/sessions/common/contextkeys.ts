@@ -32,6 +32,7 @@ export const SessionIsReadContext = new RawContextKey<boolean>('sessionIsRead', 
 export const SessionIsArchivedContext = new RawContextKey<boolean>('sessionIsArchived', false, localize('sessionIsArchived', "Whether the session is archived (marked as done)"));
 export const SessionHasChangesContext = new RawContextKey<boolean>('sessionHasChanges', false, localize('sessionHasChanges', "Whether the session view's session has pending changes (insertions or deletions)"));
 export const SessionsTerminalModeEnabledContext = new RawContextKey<boolean>('sessionsTerminalModeEnabled', false, localize('sessionsTerminalModeEnabled', "Whether the global terminal mode is on, rendering each eligible session's native Claude CLI terminal instead of the GUI chat"));
+export const SessionsClaudeNativeModeEnabledContext = new RawContextKey<boolean>('sessionsClaudeNativeModeEnabled', false, localize('sessionsClaudeNativeModeEnabled', "Whether the Claude native GUI mode is on, rendering each eligible session's chat using the new Claude-parity native renderer instead of the upstream ChatWidget"));
 
 //#endregion
 

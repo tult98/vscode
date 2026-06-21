@@ -1,0 +1,158 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * Claude-parity native transcript. Layout and spacing are modeled on the Claude
+ * Code for VS Code extension's webview; colors map to the active VS Code theme.
+ * Spacing scale 4/8/12/16, corner radii 4/6/8, brand orange #d97757.
+ * All selectors are scoped to `.chat-view-claude-native` so nothing leaks into
+ * the upstream chat widget.
+ */
+
+.chat-view.chat-view-claude-native {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+	line-height: 1.5;
+	background-color: var(--vscode-sideBar-background);
+	color: var(--vscode-foreground);
+}
+
+/* Transcript area — grows to fill available space and scrolls (like messagesContainer) */
+.chat-view.chat-view-claude-native .claude-native-transcript {
+	flex: 1 1 0;
+	overflow-y: auto;
+	overflow-x: hidden;
+	display: flex;
+	flex-direction: column;
+	padding: 20px 20px 40px;
+	box-sizing: border-box;
+}
+
+/* Composer host — pinned below the transcript, does not scroll. */
+.chat-view.chat-view-claude-native .claude-native-composer-host {
+	flex: 0 0 auto;
+	box-sizing: border-box;
+	padding: 8px 16px 16px;
+}
+
+.chat-view.chat-view-claude-native .claude-native-empty {
+	margin: auto;
+	padding: 0 24px;
+	text-align: center;
+	color: var(--vscode-descriptionForeground);
+	opacity: 0.8;
+}
+
+/* One turn per request/response (like message) */
+.chat-view.chat-view-claude-native .claude-turn {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	padding: 8px 0;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.chat-view.chat-view-claude-native .claude-turn-user {
+	align-self: stretch;
+	background-color: var(--vscode-editor-background);
+	border-radius: var(--vscode-cornerRadius-large);
+	padding: 8px 12px;
+}
+
+.chat-view.chat-view-claude-native .claude-turn-assistant {
+	align-self: stretch;
+}
+
+.chat-view.chat-view-claude-native .claude-content {
+	width: 100%;
+	min-width: 0;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.chat-view.chat-view-claude-native .claude-turn-assistant .claude-content {
+	white-space: normal;
+}
+
+/* Collapsible blocks (thinking, tool calls) */
+.chat-view.chat-view-claude-native .claude-block {
+	width: 100%;
+	min-width: 0;
+	margin: 4px 0;
+}
+
+.chat-view.chat-view-claude-native .claude-block-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	color: var(--vscode-descriptionForeground);
+	min-width: 0;
+}
+
+.chat-view.chat-view-claude-native .claude-block-header-clickable {
+	cursor: pointer;
+}
+
+.chat-view.chat-view-claude-native .claude-block-icon {
+	flex-shrink: 0;
+}
+
+.chat-view.chat-view-claude-native .claude-tool .claude-block-icon.codicon-check {
+	color: var(--vscode-charts-green, #d97757);
+}
+
+.chat-view.chat-view-claude-native .claude-tool .claude-block-icon.codicon-error {
+	color: var(--vscode-errorForeground);
+}
+
+/* Header title clamps to one line (like innerCallHeader) */
+.chat-view.chat-view-claude-native .claude-block-title {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.chat-view.chat-view-claude-native .claude-block-title p {
+	margin: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.chat-view.chat-view-claude-native .claude-block-chevron {
+	flex-shrink: 0;
+	color: var(--vscode-descriptionForeground);
+}
+
+.chat-view.chat-view-claude-native .claude-block-content {
+	margin-top: 4px;
+	margin-left: 16px;
+	min-width: 0;
+}
+
+.chat-view.chat-view-claude-native .claude-thinking .claude-block-content {
+	color: var(--vscode-descriptionForeground);
+}
+
+/* Tool input box (like inputJson) */
+.chat-view.chat-view-claude-native .claude-input-json {
+	border: 1px solid var(--vscode-input-border, transparent);
+	background: var(--vscode-textCodeBlock-background);
+	font-family: var(--monaco-monospace-font);
+	font-size: 0.9em;
+	overflow: auto;
+	white-space: pre-wrap;
+	word-break: break-word;
+	border-radius: var(--vscode-cornerRadius-small);
+	margin: 8px 0 0;
+	padding: 8px;
+}
