@@ -128,11 +128,6 @@ function toAgentModelInfoFromSdk(m: ModelInfo, provider: AgentProvider): IAgentM
 		provider,
 		id: tryParseClaudeModelId(m.value)?.toEndpointModelId() ?? m.value,
 		name: m.displayName,
-		// The CLI carries the resolved version (e.g. "Sonnet 4.6 · Efficient for
-		// routine tasks") in `description`, not `displayName` (which is just the
-		// alias). Thread it through so the picker shows the version as its detail
-		// line — mirroring the native `claude` /model selector.
-		...(m.description ? { description: m.description } : {}),
 		supportsVision: true,
 		...(configSchema ? { configSchema } : {}),
 	};

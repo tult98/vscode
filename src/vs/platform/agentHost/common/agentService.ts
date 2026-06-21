@@ -752,13 +752,6 @@ export interface IAgentModelInfo {
 	readonly provider: AgentProvider;
 	readonly id: string;
 	readonly name: string;
-	/**
-	 * Optional secondary description shown beneath the name in model pickers
-	 * (e.g. the Claude CLI's `"Sonnet 4.6 · Efficient for routine tasks"`,
-	 * where the version lives). Surfaced to clients as
-	 * `ILanguageModelChatMetadata.detail`.
-	 */
-	readonly description?: string;
 	readonly maxContextWindow?: number;
 	readonly supportsVision: boolean;
 	readonly configSchema?: ConfigSchema;

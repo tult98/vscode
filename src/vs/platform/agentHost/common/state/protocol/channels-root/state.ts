@@ -95,12 +95,6 @@ export interface SessionModelInfo {
 	provider: string;
 	/** Human-readable model name */
 	name: string;
-	/**
-	 * Optional secondary description (e.g. the Claude CLI's
-	 * `"Sonnet 4.6 · Efficient for routine tasks"`). Clients render it as the
-	 * model picker's `detail` line.
-	 */
-	description?: string;
 	/** Maximum context window size */
 	maxContextWindow?: number;
 	/** Whether the model supports vision */

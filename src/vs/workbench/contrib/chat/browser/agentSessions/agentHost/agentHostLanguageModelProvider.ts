@@ -68,7 +68,6 @@ export class AgentHostLanguageModelProvider extends Disposable implements ILangu
 					metadata: {
 						extension: nullExtensionDescription.identifier,
 						name: m.name,
-						detail: m.description,
 						id: m.id,
 						vendor: this._vendor,
 						version: '1.0',

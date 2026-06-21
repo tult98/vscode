@@ -1446,10 +1446,10 @@ suite('ClaudeAgent', () => {
 			await waitUntil(() => agent.models.get().length === SDK_MODELS.length);
 
 			assert.deepStrictEqual(
-				agent.models.get().map(m => ({ id: m.id, name: m.name, description: m.description })),
+				agent.models.get().map(m => ({ id: m.id, name: m.name })),
 				[
-					{ id: 'claude-opus-4.5', name: 'Claude Opus 4.5', description: 'flagship' },
-					{ id: 'claude-haiku-4.5', name: 'Claude Haiku 4.5', description: 'fast' },
+					{ id: 'claude-opus-4.5', name: 'Claude Opus 4.5' },
+					{ id: 'claude-haiku-4.5', name: 'Claude Haiku 4.5' },
 				],
 			);
 		}));
@@ -1470,14 +1470,13 @@ suite('ClaudeAgent', () => {
 			await tick();
 
 			assert.deepStrictEqual(
-				agent.models.get().map(m => ({ id: m.id, name: m.name, description: m.description, supportsVision: m.supportsVision, hasConfigSchema: m.configSchema !== undefined })),
+				agent.models.get().map(m => ({ id: m.id, name: m.name, supportsVision: m.supportsVision, hasConfigSchema: m.configSchema !== undefined })),
 				[
 					// SDK hyphenated ids normalized to the dotted endpoint id; the alias
-					// `displayName` becomes the name and the versioned `description` is
-					// threaded through; the model with effort levels gains a
+					// `displayName` becomes the name; the model with effort levels gains a
 					// thinking-level configSchema.
-					{ id: 'claude-opus-4.5', name: 'Claude Opus 4.5', description: 'flagship', supportsVision: true, hasConfigSchema: true },
-					{ id: 'claude-haiku-4.5', name: 'Claude Haiku 4.5', description: 'fast', supportsVision: true, hasConfigSchema: false },
+					{ id: 'claude-opus-4.5', name: 'Claude Opus 4.5', supportsVision: true, hasConfigSchema: true },
+					{ id: 'claude-haiku-4.5', name: 'Claude Haiku 4.5', supportsVision: true, hasConfigSchema: false },
 				],
 			);
 		}));
