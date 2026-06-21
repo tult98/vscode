@@ -573,6 +573,30 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 		return this._config.connection.getCompletionTriggerCharacters();
 	}
 
+	async prewarmChatSession(sessionResource: URI): Promise<void> {
+		// Warm the backend session so the host materializes it (binding the
+		// agent's live query) and its session-scoped slash commands / skills
+		// become available to `provideChatInputCompletions` before the user
+		// sends a first message. Idempotent on the host side.
+		const backendSession = this._resolveSessionUri(sessionResource);
+		// For a freshly composed session the sessions provider's eager
+		// `createSession` may still be in flight; wait for it so the backend
+		// session exists before we ask the host to materialize it (otherwise
+		// the host has nothing to warm and would treat it as an unknown
+		// resume).
+		const inflight = this._config.connection.getInflightSessionCreate?.(backendSession);
+		if (inflight) {
+			try {
+				await inflight;
+			} catch {
+				// Swallow — best-effort warm; nothing to materialize if the
+				// create failed.
+				return;
+			}
+		}
+		await this._config.connection.warmSession(backendSession);
+	}
+
 	private _createCompletionItem(raw: AhpCompletionItem, text: string, attachment: IChatInputCompletionItem['attachment']): IChatInputCompletionItem {
 		const item: Mutable<IChatInputCompletionItem> = {
 			insertText: raw.insertText,

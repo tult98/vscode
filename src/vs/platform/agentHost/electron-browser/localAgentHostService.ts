@@ -231,6 +231,9 @@ export class LocalAgentHostServiceClient extends Disposable implements IAgentHos
 	disposeSession(session: URI): Promise<void> {
 		return this._proxy.disposeSession(session);
 	}
+	warmSession(session: URI): Promise<void> {
+		return this._proxy.warmSession(session);
+	}
 	createChat(session: URI, chat: URI, options?: IAgentCreateChatOptions): Promise<void> {
 		return this._proxy.createChat(session, chat, options);
 	}

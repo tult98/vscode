@@ -108,6 +108,12 @@ class SlashCommandCompletions extends Disposable {
 					return null;
 				}
 
+				if (isAgentHostBackedWidget(widget)) {
+					// Agent-host sessions delegate completions to the host
+					// process via `AgentHostInputCompletions`.
+					return null;
+				}
+
 				const range = computeCompletionRanges(model, position, SlashCommandWord);
 				if (!range) {
 					return null;

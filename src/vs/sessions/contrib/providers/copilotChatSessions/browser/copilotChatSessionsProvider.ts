@@ -43,7 +43,7 @@ import { IConfigurationService } from '../../../../../platform/configuration/com
 import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { SessionConfigKey } from '../../../../../platform/agentHost/common/sessionConfigKeys.js';
-import { ClaudePreferAgentHostAgentsSettingId } from '../../../../../platform/agentHost/common/agentService.js';
+import { ClaudeNativeCliSettingId, ClaudePreferAgentHostAgentsSettingId } from '../../../../../platform/agentHost/common/agentService.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { IGitHubService } from '../../../github/browser/githubService.js';
 import { computePullRequestIcon, GitHubPullRequestState } from '../../../github/common/types.js';
@@ -1444,12 +1444,23 @@ export class CopilotChatSessionsProvider extends Disposable implements ISessions
 	/**
 	 * Claude is offered by this (Copilot Chat sessions) provider only when the
 	 * underlying `claudeAgent.enabled` setting is on AND the user has not opted
-	 * the agent-host implementation in via `chat.agents.claude.preferAgentHost`.
-	 * When the latter is true, the agent host registers Claude itself and this
-	 * provider stays out of the way so the picker shows a single entry.
+	 * the agent-host implementation in via `chat.agents.claude.preferAgentHost`
+	 * or `chat.agents.claude.nativeCli`. When either is true, the agent host
+	 * registers Claude itself and this provider stays out of the way so the
+	 * picker shows a single entry.
 	 */
 	private _isClaudeAvailable(): boolean {
 		return this._claudeEnabled && !this._preferAgentHostClaude;
+	}
+
+	/**
+	 * Whether the agent host (rather than this Copilot provider) supplies Claude
+	 * in this window — true when either the explicit `preferAgentHost` opt-in or
+	 * the native-CLI switch is on.
+	 */
+	private _readAgentHostProvidesClaude(): boolean {
+		return (this.configurationService.getValue<boolean>(ClaudePreferAgentHostAgentsSettingId) ?? false)
+			|| (this.configurationService.getValue<boolean>(ClaudeNativeCliSettingId) ?? false);
 	}
 
 	/**
@@ -1483,12 +1494,12 @@ export class CopilotChatSessionsProvider extends Disposable implements ISessions
 
 		this._multiChatEnabled = this.configurationService.getValue<boolean>(COPILOT_MULTI_CHAT_SETTING) ?? true;
 		this._claudeEnabled = this.configurationService.getValue<boolean>(CLAUDE_CODE_ENABLED_SETTING);
-		this._preferAgentHostClaude = this.configurationService.getValue<boolean>(ClaudePreferAgentHostAgentsSettingId) ?? false;
+		this._preferAgentHostClaude = this._readAgentHostProvidesClaude();
 		this._hideExtensionHostCopilotCli = this.configurationService.getValue<boolean>(ChatConfiguration.CopilotCliHideExtensionHostAgents) ?? false;
 
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
 			const claudeEnabledChanged = e.affectsConfiguration(CLAUDE_CODE_ENABLED_SETTING);
-			const preferAgentHostChanged = e.affectsConfiguration(ClaudePreferAgentHostAgentsSettingId);
+			const preferAgentHostChanged = e.affectsConfiguration(ClaudePreferAgentHostAgentsSettingId) || e.affectsConfiguration(ClaudeNativeCliSettingId);
 			const hideCopilotCliChanged = e.affectsConfiguration(ChatConfiguration.CopilotCliHideExtensionHostAgents);
 			if (!claudeEnabledChanged && !preferAgentHostChanged && !hideCopilotCliChanged) {
 				return;
@@ -1499,7 +1510,7 @@ export class CopilotChatSessionsProvider extends Disposable implements ISessions
 				this._claudeEnabled = this.configurationService.getValue<boolean>(CLAUDE_CODE_ENABLED_SETTING);
 			}
 			if (preferAgentHostChanged) {
-				this._preferAgentHostClaude = this.configurationService.getValue<boolean>(ClaudePreferAgentHostAgentsSettingId) ?? false;
+				this._preferAgentHostClaude = this._readAgentHostProvidesClaude();
 			}
 			if (hideCopilotCliChanged) {
 				this._hideExtensionHostCopilotCli = this.configurationService.getValue<boolean>(ChatConfiguration.CopilotCliHideExtensionHostAgents) ?? false;

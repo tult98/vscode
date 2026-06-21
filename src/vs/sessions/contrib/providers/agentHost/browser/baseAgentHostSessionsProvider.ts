@@ -1681,7 +1681,7 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 		// first auth pass completes.
 		if (connection) {
 			if (!this.authenticationPending.get()) {
-				this._startNewSessionBackend(newSession, connection);
+				this._startNewSessionBackend(newSession);
 			}
 		} else {
 			newSession.setLoading(false);
@@ -1690,18 +1690,24 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 	}
 
 	protected _resumeNewSessionAfterAuthenticationSettles(): void {
-		const connection = this.connection;
-		if (!connection) {
+		if (!this.connection) {
 			return;
 		}
 		for (const newSession of this._newSessions.values()) {
-			this._startNewSessionBackend(newSession, connection);
+			this._startNewSessionBackend(newSession);
 		}
 	}
 
-	private _startNewSessionBackend(newSession: NewSession, connection: IAgentConnection): void {
+	private _startNewSessionBackend(newSession: NewSession): void {
+		// Resolve the agent/model picker config, but do NOT eagerly create the
+		// backend session: an eager `createSession` surfaces an empty,
+		// zero-turn session in the list (and gives the native terminal a
+		// non-resumable id that makes `claude --resume` exit 1). The backend
+		// session is instead created lazily on the user's first message — the
+		// legacy first-message path in `AgentHostSessionHandler._invokeAgent`
+		// issues `createSession` when no session state exists at send time, so
+		// sending stays correct (only the latency pre-warm is lost).
 		void this._refreshNewSessionConfig(newSession);
-		newSession.eagerCreate(connection);
 	}
 
 	/**

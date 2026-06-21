@@ -51,6 +51,7 @@ export class MockAgent implements IAgent {
 	readonly sendMessageCalls: { session: URI; prompt: string; attachments?: readonly MessageAttachment[]; chat?: URI }[] = [];
 	readonly setPendingMessagesCalls: { session: URI; steeringMessage: PendingMessage | undefined; queuedMessages: readonly PendingMessage[] }[] = [];
 	readonly disposeSessionCalls: URI[] = [];
+	readonly ensureMaterializedCalls: URI[] = [];
 	readonly abortSessionCalls: URI[] = [];
 	readonly respondToPermissionCalls: { requestId: string; approved: boolean }[] = [];
 	readonly changeModelCalls: { session: URI; model: ModelSelection }[] = [];
@@ -144,6 +145,10 @@ export class MockAgent implements IAgent {
 	async disposeSession(session: URI): Promise<void> {
 		this.disposeSessionCalls.push(session);
 		this._sessions.delete(AgentSession.id(session));
+	}
+
+	async ensureMaterialized(session: URI): Promise<void> {
+		this.ensureMaterializedCalls.push(session);
 	}
 
 	async abortSession(session: URI): Promise<void> {

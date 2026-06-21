@@ -110,6 +110,22 @@ export interface CreateSessionParams extends BaseParams {
  */
 export interface DisposeSessionParams extends BaseParams { }
 
+// ─── warmSession ─────────────────────────────────────────────────────────────
+
+/**
+ * Warms a session ahead of its first message by performing the same lazy
+ * materialization the first `sendMessage` would, without sending anything.
+ * Lets clients surface session-scoped customizations (e.g. the agent's slash
+ * commands / skills) before the user composes a request. Idempotent.
+ *
+ * @category Commands
+ * @method warmSession
+ * @direction Client → Server
+ * @messageType Request
+ * @version 1
+ */
+export interface WarmSessionParams extends BaseParams { }
+
 // ─── fetchTurns ──────────────────────────────────────────────────────────────
 
 /**

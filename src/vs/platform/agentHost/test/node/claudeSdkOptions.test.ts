@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { hasKey } from '../../../../base/common/types.js';
 import { URI } from '../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { buildOptions, buildSubprocessEnv } from '../../node/claude/claudeSdkOptions.js';
@@ -18,6 +19,7 @@ suite('claudeSdkOptions / buildSubprocessEnv', () => {
 		'ELECTRON_RUN_AS_NODE',
 		'NODE_OPTIONS',
 		'ANTHROPIC_API_KEY',
+		'CLAUDE_CODE_OAUTH_TOKEN',
 		'VSCODE_PID',
 		'VSCODE_NLS_CONFIG',
 		'ELECTRON_NO_ATTACH_CONSOLE',
@@ -78,6 +80,36 @@ suite('claudeSdkOptions / buildSubprocessEnv', () => {
 
 		assert.strictEqual(env.ELECTRON_RUN_AS_NODE, '1');
 	});
+
+	test('subscription mode forwards direct-auth credentials into the env map (SDK reads from Options.env, not process.env)', () => {
+		clearAndSet({
+			CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat-test',
+			ANTHROPIC_API_KEY: 'sk-user',
+			NODE_OPTIONS: '--inspect',
+		});
+
+		const env = buildSubprocessEnv(true);
+
+		// Credentials must be explicitly present (not just inherited) so the
+		// SDK's `o ?? process.env` auth check sees them.
+		assert.strictEqual(env.CLAUDE_CODE_OAUTH_TOKEN, 'sk-ant-oat-test');
+		assert.strictEqual(env.ANTHROPIC_API_KEY, 'sk-user');
+		// NODE_OPTIONS is still stripped (unrelated to Anthropic auth).
+		assert.strictEqual(env.NODE_OPTIONS, undefined);
+		assert.strictEqual(env.ELECTRON_RUN_AS_NODE, '1');
+	});
+
+	test('subscription mode omits credentials that are not set (no empty keys)', () => {
+		clearAndSet({
+			CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat-test',
+		});
+
+		const env = buildSubprocessEnv(true);
+
+		assert.strictEqual(env.CLAUDE_CODE_OAUTH_TOKEN, 'sk-ant-oat-test');
+		// ANTHROPIC_API_KEY absent in process.env → must not appear as a key.
+		assert.ok(!hasKey(env, { ANTHROPIC_API_KEY: true }), 'unset credentials should not be forwarded');
+	});
 });
 
 suite('claudeSdkOptions / buildOptions plugins projection', () => {
@@ -125,5 +157,21 @@ suite('claudeSdkOptions / buildOptions plugins projection', () => {
 	test('undefined plugins omits Options.plugins', async () => {
 		const opts = await buildOptions(input(undefined), proxyHandle, () => { }, () => { });
 		assert.strictEqual(opts.plugins, undefined);
+	});
+
+	test('with proxy handle, sets ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN to the proxy', async () => {
+		const opts = await buildOptions(input(undefined), proxyHandle, () => { }, () => { });
+		const env = (opts.settings as { env: Record<string, string> }).env;
+		assert.strictEqual(env.ANTHROPIC_BASE_URL, proxyHandle.baseUrl);
+		assert.strictEqual(env.ANTHROPIC_AUTH_TOKEN, `${proxyHandle.nonce}.s1`);
+	});
+
+	test('subscription mode (no proxy handle) omits ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN', async () => {
+		const opts = await buildOptions(input(undefined), undefined, () => { }, () => { });
+		const env = (opts.settings as { env: Record<string, string> }).env;
+		assert.ok(!hasKey(env, { ANTHROPIC_BASE_URL: true }), 'ANTHROPIC_BASE_URL must be absent so the SDK uses api.anthropic.com');
+		assert.ok(!hasKey(env, { ANTHROPIC_AUTH_TOKEN: true }), 'ANTHROPIC_AUTH_TOKEN must be absent in subscription mode');
+		// Non-auth settings are still present.
+		assert.strictEqual(env.USE_BUILTIN_RIPGREP, '0');
 	});
 });

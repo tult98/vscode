@@ -134,6 +134,68 @@
 	background: var(--vscode-toolbar-hoverBackground);
 }
 
+/* View-mode segmented toggle (Terminal/TUI vs rich GUI) in the session actions toolbar */
+.monaco-workbench .part.titlebar > .sessions-titlebar-container > .titlebar-right > .titlebar-session-actions-container .action-item.agent-view-mode-toggle {
+	display: flex;
+	align-items: center;
+}
+
+.agent-view-mode-toggle .agent-view-mode-toggle__divider {
+	width: 1px;
+	height: 14px;
+	margin: 0 5px;
+	background: var(--vscode-widget-border, rgba(255, 255, 255, 0.13));
+}
+
+.agent-view-mode-toggle .agent-view-mode-toggle__group {
+	display: flex;
+	align-items: center;
+	gap: 1px;
+	padding: 1px;
+	border-radius: var(--vscode-cornerRadius-medium, 6px);
+	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.09));
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.agent-view-mode-toggle .agent-view-mode-toggle__segment {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 18px;
+	border-radius: var(--vscode-cornerRadius-small);
+	color: var(--vscode-icon-foreground);
+	opacity: 0.6;
+	cursor: pointer;
+	transition: background 0.12s ease, color 0.12s ease, opacity 0.12s ease;
+}
+
+.agent-view-mode-toggle .agent-view-mode-toggle__segment:hover {
+	opacity: 1;
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.agent-view-mode-toggle .agent-view-mode-toggle__segment.active {
+	color: var(--vscode-button-foreground);
+	background: var(--vscode-button-background);
+	opacity: 1;
+}
+
+.agent-view-mode-toggle .agent-view-mode-toggle__segment.active:hover {
+	background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
+}
+
+.agent-view-mode-toggle .agent-view-mode-toggle__segment:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.agent-view-mode-toggle .agent-view-mode-toggle__segment svg {
+	display: block;
+	width: 14px;
+	height: 14px;
+}
+
 .monaco-workbench .part.titlebar > .sessions-titlebar-container > .titlebar-right > .titlebar-actions-container .monaco-action-bar .action-item:not(.disabled) .codicon {
 	color: var(--vscode-icon-foreground);
 }

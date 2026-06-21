@@ -4,13 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import type { CCAModel } from '@vscode/copilot-api';
-import type { Options, SDKSessionInfo, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { ModelInfo, Options, SDKSessionInfo, SDKUserMessage, WarmQuery } from '@anthropic-ai/claude-agent-sdk';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { SequencerByKey } from '../../../../base/common/async.js';
+import { raceTimeout, SequencerByKey } from '../../../../base/common/async.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { CancellationError } from '../../../../base/common/errors.js';
 import { Emitter } from '../../../../base/common/event.js';
-import { Disposable, DisposableMap, IDisposable } from '../../../../base/common/lifecycle.js';
+import { Disposable, DisposableMap, IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { IObservable, observableValue } from '../../../../base/common/observable.js';
 import { URI } from '../../../../base/common/uri.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
@@ -23,7 +23,7 @@ import { createSchema, platformSessionSchema, schemaProperty } from '../../commo
 import { ClaudePermissionMode, ClaudeSessionConfigKey, narrowClaudePermissionMode } from '../../common/claudeSessionConfigKeys.js';
 import { createClaudeThinkingLevelSchema, isClaudeEffortLevel } from '../../common/claudeModelConfig.js';
 import { SessionConfigKey } from '../../common/sessionConfigKeys.js';
-import { AgentProvider, AgentSession, AgentSignal, GITHUB_COPILOT_PROTECTED_RESOURCE, IAgent, IAgentCreateSessionConfig, IAgentCreateSessionResult, IAgentDescriptor, IAgentMaterializeSessionEvent, IAgentModelInfo, IAgentResolveSessionConfigParams, IAgentSessionConfigCompletionsParams, IAgentSessionMetadata, IAgentSessionProjectInfo } from '../../common/agentService.js';
+import { AgentHostClaudeUseCliEnvVar, AgentHostClaudeUseSubscriptionEnvVar, AgentProvider, AgentSession, AgentSignal, GITHUB_COPILOT_PROTECTED_RESOURCE, IAgent, IAgentCreateSessionConfig, IAgentCreateSessionResult, IAgentDescriptor, IAgentMaterializeSessionEvent, IAgentModelInfo, IAgentResolveSessionConfigParams, IAgentSessionConfigCompletionsParams, IAgentSessionMetadata, IAgentSessionProjectInfo, isAgentEnabled } from '../../common/agentService.js';
 import { ActionType } from '../../common/state/sessionActions.js';
 import type { ResolveSessionConfigResult, SessionConfigCompletionsResult } from '../../common/state/protocol/commands.js';
 import { AHP_AUTH_REQUIRED, ProtocolError } from '../../common/state/sessionProtocol.js';
@@ -37,7 +37,8 @@ import { ICopilotApiService } from '../shared/copilotApiService.js';
 import { IClaudeAgentSdkService } from './claudeAgentSdkService.js';
 import { mapSessionMessagesToTurns } from './claudeReplayMapper.js';
 import { getSubagentTranscript } from './claudeSubagentResolver.js';
-import { ClaudeAgentSession } from './claudeAgentSession.js';
+import { ClaudeAgentSession, ClaudeWorkspaceSkillCache } from './claudeAgentSession.js';
+import { buildOptions } from './claudeSdkOptions.js';
 import { handleCanUseTool } from './claudeCanUseTool.js';
 import type { IAgentServerToolHost } from '../../common/agentServerTools.js';
 import { tryParseClaudeModelId } from './claudeModelId.js';
@@ -109,6 +110,59 @@ function toAgentModelInfo(m: CCAModel, provider: AgentProvider): IAgentModelInfo
 	};
 }
 
+/**
+ * Project a Claude Agent SDK {@link ModelInfo} — returned by the running
+ * instance's `initialize` handshake via {@link ClaudeAgentSession.getAvailableModels}
+ * — into the agent host's {@link IAgentModelInfo} surface. Used in subscription /
+ * CLI mode, where there is no CAPI `/models` enumeration: the live SDK / CLI is
+ * the source of truth. The SDK speaks hyphenated ids (`claude-opus-4-5`); convert
+ * to the canonical dotted endpoint id via {@link tryParseClaudeModelId} so the id
+ * matches the rest of the model plumbing (the `toSdkModelId` seam converts back
+ * at spawn time). `ModelInfo` carries no context-window / vision fields, so we
+ * default `supportsVision` to true (consistent with {@link buildSubscriptionClaudeModels}).
+ */
+function toAgentModelInfoFromSdk(m: ModelInfo, provider: AgentProvider): IAgentModelInfo {
+	const supportedEfforts = (m.supportedEffortLevels ?? []).filter(isClaudeEffortLevel);
+	const configSchema = createClaudeThinkingLevelSchema(supportedEfforts);
+	return {
+		provider,
+		id: tryParseClaudeModelId(m.value)?.toEndpointModelId() ?? m.value,
+		name: m.displayName,
+		// The CLI carries the resolved version (e.g. "Sonnet 4.6 · Efficient for
+		// routine tasks") in `description`, not `displayName` (which is just the
+		// alias). Thread it through so the picker shows the version as its detail
+		// line — mirroring the native `claude` /model selector.
+		...(m.description ? { description: m.description } : {}),
+		supportsVision: true,
+		...(configSchema ? { configSchema } : {}),
+	};
+}
+
+/**
+ * Static Claude model catalogue advertised when the agent runs in
+ * **subscription mode** (`chat.agentHost.claudeAgent.useClaudeSubscription`).
+ * In that mode there is no GitHub token and no Copilot proxy, so we cannot
+ * enumerate models from CAPI; we publish a curated list instead. Ids are in
+ * the canonical dotted endpoint format (`ModelSelection.id`); the
+ * `toSdkModelId` seam in `buildOptions` converts them to the SDK/CLI's
+ * hyphenated form at spawn time. Keep this in sync with Anthropic's current
+ * subscription-eligible model lineup.
+ */
+function buildSubscriptionClaudeModels(provider: AgentProvider): IAgentModelInfo[] {
+	const mk = (id: string, name: string, maxContextWindow: number): IAgentModelInfo => ({
+		provider,
+		id,
+		name,
+		maxContextWindow,
+		supportsVision: true,
+	});
+	return [
+		mk('claude-sonnet-4.5', 'Claude Sonnet 4.5', 200_000),
+		mk('claude-opus-4.1', 'Claude Opus 4.1', 200_000),
+		mk('claude-haiku-4.5', 'Claude Haiku 4.5', 200_000),
+	];
+}
+
 // Single source of truth for narrowing an arbitrary runtime value to
 // the closed `ClaudePermissionMode` union now lives in
 // `../../common/claudeSessionConfigKeys.ts` so it can be shared by
@@ -155,6 +209,16 @@ export class ClaudeAgent extends Disposable implements IAgent {
 	private readonly _models = observableValue<readonly IAgentModelInfo[]>(this, []);
 	readonly models: IObservable<readonly IAgentModelInfo[]> = this._models;
 
+	/**
+	 * Flips true once the running Claude instance's real model list has been
+	 * published (subscription / CLI mode only). Set only on a SUCCESSFUL
+	 * discovery — never speculatively — so the startup probe and the
+	 * per-session path can both attempt discovery without a failed attempt
+	 * blocking a later one. The model list is provider-global, so once true we
+	 * stop discovering for the rest of the agent-host lifetime.
+	 */
+	private _modelsDiscovered = false;
+
 	private _githubToken: string | undefined;
 	private _proxyHandle: IClaudeProxyHandle | undefined;
 	private _serverToolHost: IAgentServerToolHost | undefined;
@@ -181,6 +245,15 @@ export class ClaudeAgent extends Disposable implements IAgent {
 	 * is idempotent if the key has already been removed.
 	 */
 	private readonly _sessions = this._register(new DisposableMap<string, ClaudeSessionEntry>());
+
+	/**
+	 * Process-wide, write-through cache of the discovered-customizations
+	 * bundle keyed by working directory, shared across all sessions. The
+	 * first materialized session in a workspace populates it; later
+	 * provisional sessions read it so the `/` picker shows the agent's
+	 * skills before they have a live query. See {@link ClaudeWorkspaceSkillCache}.
+	 */
+	private readonly _workspaceSkillCache: ClaudeWorkspaceSkillCache = new Map();
 
 	/**
 	 * Phase 6: fired once per session when {@link _materializeProvisional}
@@ -228,6 +301,16 @@ export class ClaudeAgent extends Disposable implements IAgent {
 		return this._sessions.get(sessionId)?.session;
 	}
 
+	/**
+	 * Subscription mode (`chat.agentHost.claudeAgent.useClaudeSubscription`):
+	 * authenticate directly against Anthropic with the user's Claude Pro/Max
+	 * credentials instead of routing through the GitHub Copilot proxy. When
+	 * set, the agent declares no protected resources, never starts the proxy,
+	 * advertises {@link buildSubscriptionClaudeModels}, and the SDK subprocess
+	 * talks to `api.anthropic.com` directly (see `buildOptions`/`buildSubprocessEnv`).
+	 */
+	private readonly _useSubscription: boolean;
+
 	constructor(
 		@ILogService private readonly _logService: ILogService,
 		@ICopilotApiService private readonly _copilotApiService: ICopilotApiService,
@@ -240,7 +323,36 @@ export class ClaudeAgent extends Disposable implements IAgent {
 		@IProductService private readonly _productService: IProductService,
 	) {
 		super();
+		// Read the subscription toggle from the env var the agent host starter
+		// forwards from `chat.agentHost.claudeAgent.useClaudeSubscription`. Kept
+		// out of the constructor signature so the DI `createInstance(ClaudeAgent)`
+		// call sites (and tests) stay arg-free.
+		// CLI transport implies subscription-style auth: the spawned `claude`
+		// binary talks to Anthropic directly, so the proxy / Copilot sign-in
+		// path must be bypassed exactly as in subscription mode.
+		const useCli = isAgentEnabled(process.env[AgentHostClaudeUseCliEnvVar], false);
+		this._useSubscription = isAgentEnabled(process.env[AgentHostClaudeUseSubscriptionEnvVar], false) || useCli;
 		this._metadataStore = _instantiationService.createInstance(ClaudeSessionMetadataStore, this.id);
+		if (this._useSubscription) {
+			// Subscription mode: no CAPI, so publish the static model catalogue
+			// up front. Auth (`authenticate`) and credit reports (proxy) never
+			// fire in this mode, so there is nothing else to wire.
+			this._logService.info('[Claude] Subscription mode enabled — using Claude Pro/Max credentials, bypassing Copilot proxy');
+			// Diagnostic: surface whether direct-auth credentials are actually
+			// visible to the agent host process (presence only, never the value).
+			// If both are false here, the token never propagated into this
+			// process's environment (e.g. launched from a shell without it).
+			const oauthTok = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+			const apiKey = process.env.ANTHROPIC_API_KEY;
+			this._logService.info(`[Claude] Direct-auth credentials visible to agent host: CLAUDE_CODE_OAUTH_TOKEN(len=${oauthTok?.length ?? 0}, prefix=${oauthTok?.slice(0, 13) ?? '-'}), ANTHROPIC_API_KEY(len=${apiKey?.length ?? 0})`);
+			this._models.set(buildSubscriptionClaudeModels(this.id), undefined);
+			// Eagerly probe the running instance for its real model list so the
+			// picker shows it on the very first "New session" screen, before any
+			// message is sent. Best-effort and fire-and-forget — the seed above
+			// stays visible until (and if) the probe succeeds.
+			void this._runDiscovery(() => this._probeSupportedModels());
+			return;
+		}
 		// CAPI reports each request's billed credits via the proxy (the SDK
 		// strips `copilot_usage` from its `result`). Route every report to
 		// the originating session by the session id the proxy decoded from
@@ -261,10 +373,23 @@ export class ClaudeAgent extends Disposable implements IAgent {
 	}
 
 	getProtectedResources(): ProtectedResourceMetadata[] {
-		return [GITHUB_COPILOT_PROTECTED_RESOURCE];
+		// Subscription mode authenticates directly against Anthropic with the
+		// user's Claude credentials, so there is no Copilot resource to gate
+		// on. Returning an empty list means the workbench never resolves a
+		// GitHub token for Claude and the session type is not Copilot-gated.
+		return this._useSubscription ? [] : [GITHUB_COPILOT_PROTECTED_RESOURCE];
 	}
 
-	private _ensureAuthenticated(): IClaudeProxyHandle {
+	/**
+	 * Returns the proxy handle the SDK must route through, or `undefined` in
+	 * subscription mode (the SDK talks to Anthropic directly, no proxy). In
+	 * Copilot-proxy mode an absent handle is a hard error — the caller has not
+	 * authenticated yet.
+	 */
+	private _ensureAuthenticated(): IClaudeProxyHandle | undefined {
+		if (this._useSubscription) {
+			return undefined;
+		}
 		const handle = this._proxyHandle;
 		if (!handle) {
 			throw new ProtocolError(
@@ -277,6 +402,10 @@ export class ClaudeAgent extends Disposable implements IAgent {
 	}
 
 	async authenticate(resource: string, token: string): Promise<boolean> {
+		if (this._useSubscription) {
+			// No Copilot proxy in subscription mode — nothing to authenticate.
+			return true;
+		}
 		if (resource !== GITHUB_COPILOT_PROTECTED_RESOURCE.resource) {
 			return false;
 		}
@@ -308,6 +437,11 @@ export class ClaudeAgent extends Disposable implements IAgent {
 	}
 
 	private async _refreshModels(): Promise<void> {
+		if (this._useSubscription) {
+			// Static catalogue is published once at construction; CAPI is
+			// unavailable without a GitHub token, so never overwrite it.
+			return;
+		}
 		const tokenAtStart = this._githubToken;
 		if (!tokenAtStart) {
 			this._models.set([], undefined);
@@ -386,6 +520,7 @@ export class ClaudeAgent extends Disposable implements IAgent {
 			permissionMode,
 			this._metadataStore,
 			this._instantiationService,
+			this._workspaceSkillCache,
 		);
 		const entry = new ClaudeSessionEntry(session);
 		entry.addDisposable(session.onDidSessionProgress(signal => this._onDidSessionProgress.fire(signal)));
@@ -444,7 +579,125 @@ export class ClaudeAgent extends Disposable implements IAgent {
 			project: session.project,
 		});
 
+		void this._maybeDiscoverModels(session);
+
 		return session;
+	}
+
+	/**
+	 * Kick off model discovery from a freshly-materialized session's live SDK /
+	 * CLI Query (whose `initialize` handshake is now answerable). Only relevant
+	 * in subscription / CLI mode — Copilot-proxy mode already enumerates models
+	 * from CAPI in {@link _refreshModels}. Fire-and-forget; a no-op once a prior
+	 * discovery (e.g. the startup probe) has already succeeded.
+	 */
+	private _maybeDiscoverModels(session: ClaudeAgentSession): void {
+		if (!this._useSubscription) {
+			return;
+		}
+		void this._runDiscovery(() => Promise.resolve(session.getAvailableModels()));
+	}
+
+	/**
+	 * Run one model-discovery attempt and, on success, publish the result.
+	 * Shared by the startup probe and the per-session path. Both may race; that
+	 * is intentional — {@link _modelsDiscovered} is set only on success, so a
+	 * failed attempt never blocks a later one, and a redundant concurrent
+	 * success simply re-publishes the same list. Best-effort: on failure or an
+	 * empty list the current catalogue (seed, or a previously-published list)
+	 * is left untouched so the picker is never blanked.
+	 */
+	private async _runDiscovery(getModels: () => Promise<readonly ModelInfo[]>): Promise<void> {
+		if (this._modelsDiscovered) {
+			return;
+		}
+		try {
+			const sdkModels = await getModels();
+			if (this._modelsDiscovered) {
+				return;
+			}
+			if (sdkModels.length === 0) {
+				this._logService.warn('[Claude] Model discovery returned no models; keeping current catalogue');
+				return;
+			}
+			this._modelsDiscovered = true;
+			this._models.set(sdkModels.map(m => toAgentModelInfoFromSdk(m, this.id)), undefined);
+			// Log the raw list (value → displayName) so the exact catalogue the
+			// running instance reports is visible — the CLI advertises its own
+			// alias-based selector ("default"/"sonnet"/"opus"/...), which differs
+			// from the versioned CAPI catalogue.
+			const summary = sdkModels.map(m => `${m.value}→"${m.displayName}"`).join(', ');
+			this._logService.info(`[Claude] Published ${sdkModels.length} model(s) discovered from the running instance: ${summary}`);
+		} catch (err) {
+			this._logService.warn('[Claude] Model discovery failed; keeping current catalogue', err);
+		}
+	}
+
+	/**
+	 * Spawn a short-lived SDK / CLI Query purely to read the running instance's
+	 * model list via {@link Query.supportedModels}, then tear it down. Sends no
+	 * user prompt — only the `initialize` handshake runs, so there is no model
+	 * turn and no token cost. The CLI transport resolves `supportedModels` only
+	 * while its message stream is being drained, so we drain in the background;
+	 * the in-process SDK does not need this but draining is harmless there too.
+	 * A timeout guards against a transport that never answers.
+	 */
+	private async _probeSupportedModels(): Promise<readonly ModelInfo[]> {
+		const abortController = new AbortController();
+		// Abort (killing any spawned subprocess) if the agent is disposed mid-probe.
+		this._register(toDisposable(() => abortController.abort()));
+		let warm: WarmQuery | undefined;
+		try {
+			const options = await buildOptions(
+				{
+					sessionId: generateUuid(),
+					// Account-level model list does not depend on the workspace; a
+					// best-effort cwd is sufficient to spawn the transport. The
+					// per-session path re-discovers with the real cwd if needed.
+					workingDirectory: URI.file(process.cwd()),
+					model: undefined,
+					abortController,
+					permissionMode: 'default',
+					// Never invoked — the probe sends no prompt, so no tool runs.
+					canUseTool: async () => ({ behavior: 'deny', message: 'claude model discovery probe' }),
+					isResume: false,
+					mcpServers: undefined,
+				},
+				// No proxy handle: subscription / CLI mode authenticates directly.
+				undefined,
+				() => { },
+				() => { },
+			);
+			warm = await this._sdkService.startup({ options });
+			if (abortController.signal.aborted) {
+				return [];
+			}
+			const query = warm.query(this._probeKeepAlivePrompt(abortController.signal));
+			const drain = (async () => {
+				try {
+					for await (const _ of query) { /* discard — only the handshake matters */ }
+				} catch { /* torn down */ }
+			})();
+			const models = await raceTimeout(Promise.resolve(query.supportedModels()), 20_000) ?? [];
+			abortController.abort();
+			await drain.catch(() => { });
+			return models;
+		} finally {
+			abortController.abort();
+			warm?.close();
+		}
+	}
+
+	/**
+	 * Prompt iterable for {@link _probeSupportedModels}: yields nothing (so the
+	 * transport never starts a turn) and stays open — keeping the CLI's stdin
+	 * alive — until the probe's abort fires.
+	 */
+	private async *_probeKeepAlivePrompt(signal: AbortSignal): AsyncGenerator<SDKUserMessage, void> {
+		if (signal.aborted) {
+			return;
+		}
+		await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
 	}
 
 	/**
@@ -500,6 +753,7 @@ export class ClaudeAgent extends Disposable implements IAgent {
 			permissionMode,
 			this._metadataStore,
 			this._instantiationService,
+			this._workspaceSkillCache,
 		);
 		const entry = new ClaudeSessionEntry(session);
 		entry.addDisposable(session.onDidSessionProgress(signal => this._onDidSessionProgress.fire(signal)));
@@ -524,6 +778,8 @@ export class ClaudeAgent extends Disposable implements IAgent {
 			workingDirectory,
 			project,
 		});
+
+		void this._maybeDiscoverModels(session);
 
 		return session;
 	}
@@ -829,6 +1085,27 @@ export class ClaudeAgent extends Disposable implements IAgent {
 			};
 
 			await session.send(sdkPrompt, effectiveTurnId);
+		});
+	}
+
+	async ensureMaterialized(sessionUri: URI): Promise<void> {
+		// Warm a session so its SDK Query is live and the SDK-resolved
+		// customization tier (built-in commands + user skills, surfaced via
+		// `getSessionCustomizations`) becomes queryable before the first
+		// message is sent. Shares the `_sessionSequencer` scope with
+		// `sendMessage` so a concurrent first send collapses into a single
+		// materialize and `isPipelineReady` short-circuits a redundant warm.
+		const sessionId = AgentSession.id(sessionUri);
+		return this._sessionSequencer.queue(sessionId, async () => {
+			const existing = this._findAnySession(sessionId);
+			if (existing?.isPipelineReady) {
+				return;
+			}
+			if (existing) {
+				await this._materializeProvisional(sessionId);
+			} else {
+				await this._resumeSession(sessionId, sessionUri);
+			}
 		});
 	}
 

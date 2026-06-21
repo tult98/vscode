@@ -111,6 +111,53 @@ export const AgentHostClaudeAgentEnabledEnvVar = 'VSCODE_AGENT_HOST_CLAUDE_AGENT
 export const AgentHostCodexAgentEnabledEnvVar = 'VSCODE_AGENT_HOST_CODEX_AGENT_ENABLED';
 
 /**
+ * Configuration key controlling whether the agent host's Claude provider talks
+ * to Anthropic **directly using the user's Claude Pro/Max subscription** instead
+ * of routing through the GitHub Copilot proxy (CAPI). When `true`, the Claude
+ * provider declares no protected resources (so no GitHub sign-in is required),
+ * never starts the Copilot proxy, advertises a static Claude model list, and
+ * lets the Claude Agent SDK authenticate against `api.anthropic.com` using the
+ * ambient Claude Code credentials (run `claude setup-token` / `claude login`, or
+ * export `CLAUDE_CODE_OAUTH_TOKEN`). Defaults to `false` (Copilot-proxy path).
+ * The agent host process must be restarted for changes to take effect.
+ */
+export const AgentHostClaudeUseSubscriptionSettingId = 'chat.agentHost.claudeAgent.useClaudeSubscription';
+
+/**
+ * Environment variable form of {@link AgentHostClaudeUseSubscriptionSettingId}.
+ * Set by the agent host starters from the setting. Accepts `'true'` /
+ * `'false'`; absent means "default" (`false`).
+ */
+export const AgentHostClaudeUseSubscriptionEnvVar = 'VSCODE_AGENT_HOST_CLAUDE_USE_SUBSCRIPTION';
+
+/**
+ * Configuration key controlling whether the agent host's Claude provider drives
+ * responses by spawning the user's installed `claude` CLI binary (headless
+ * stream-json transport) instead of the in-process Claude Agent SDK. When
+ * `true`, the GUI authenticates from the user's existing `claude login`
+ * (keychain / `~/.claude/.credentials.json`) with no `CLAUDE_CODE_OAUTH_TOKEN`
+ * required — the standalone binary can read the keychain where the Electron
+ * utility process cannot. Implies subscription mode (no Copilot proxy, no
+ * GitHub sign-in, static model catalogue). Defaults to `false`. The agent host
+ * process must be restarted for changes to take effect.
+ */
+export const AgentHostClaudeUseCliSettingId = 'chat.agentHost.claudeAgent.useCli';
+
+/**
+ * Environment variable form of {@link AgentHostClaudeUseCliSettingId}. Set by
+ * the agent host starters from the setting. Accepts `'true'` / `'false'`;
+ * absent means "default" (`false`).
+ */
+export const AgentHostClaudeUseCliEnvVar = 'VSCODE_AGENT_HOST_CLAUDE_USE_CLI';
+
+/**
+ * Environment variable form of {@link AgentHostClaudeExecutablePathSettingId},
+ * forwarded by the agent host starters so the CLI transport can resolve the
+ * binary inside the agent host process.
+ */
+export const AgentHostClaudeExecutablePathEnvVar = 'VSCODE_AGENT_HOST_CLAUDE_EXECUTABLE_PATH';
+
+/**
  * Resolves the effective enable state for a Claude/Codex provider from the
  * env-var value forwarded by the starter. Recognized values (case- and
  * whitespace-insensitive):
@@ -179,6 +226,27 @@ export const ClaudePreferAgentHostAgentsSettingId = 'chat.agents.claude.preferAg
 export const ClaudePreferAgentHostEditorSettingId = 'chat.editor.claude.preferAgentHost';
 
 /**
+ * Single switch that makes the **Agents Window** run Claude Code via the native
+ * `claude` CLI instead of GitHub Copilot, rendered in the normal GUI chat. When
+ * `true`:
+ *  - the agent host's Claude provider is surfaced (like
+ *    {@link ClaudePreferAgentHostAgentsSettingId}), so "Claude Code" is the
+ *    Claude implementation in the window, and
+ *  - the agent host drives the GUI chat via CLI transport (implies
+ *    {@link AgentHostClaudeUseCliSettingId}): it spawns the native `claude`
+ *    binary in headless `stream-json` mode, so the Claude Agent SDK is never
+ *    invoked at runtime and the CLI authenticates from the user's own
+ *    `claude login`.
+ *
+ * The transport leg is forwarded to the agent host process at spawn (see the
+ * starters' `claudeUseCli`), so it is startup-only — the agent host must be
+ * restarted for a change to take effect. The raw embedded-terminal view is a
+ * separate, independent control ("Use Claude CLI" toggle) and is not affected
+ * by this setting. EXP-backed (`experiment: { mode: 'startup' }`).
+ */
+export const ClaudeNativeCliSettingId = 'chat.agents.claude.nativeCli';
+
+/**
  * The per-window setting that selects which Claude implementation surfaces:
  * the Agents Window reads {@link ClaudePreferAgentHostAgentsSettingId}, every
  * other window reads {@link ClaudePreferAgentHostEditorSettingId}. Callers that
@@ -216,6 +284,9 @@ export function claudePreferAgentHostSettingId(isSessionsWindow: boolean): strin
  */
 export function shouldSurfaceLocalAgentHostProvider(provider: AgentProvider, configurationService: IConfigurationService, isSessionsWindow: boolean): boolean {
 	if (provider !== 'claude') {
+		return true;
+	}
+	if (isSessionsWindow && configurationService.getValue<boolean>(ClaudeNativeCliSettingId) === true) {
 		return true;
 	}
 	return configurationService.getValue<boolean>(claudePreferAgentHostSettingId(isSessionsWindow)) === true;
@@ -384,6 +455,9 @@ export interface IAgentSdkStarterSettings {
 	readonly codexHome?: string;
 	readonly codexBinaryArgs?: readonly string[];
 	readonly claudeAgentEnabled?: boolean;
+	readonly claudeUseSubscription?: boolean;
+	readonly claudeUseCli?: boolean;
+	readonly claudeExecutablePath?: string;
 	readonly codexAgentEnabled?: boolean;
 }
 
@@ -406,6 +480,13 @@ export function buildAgentSdkEnv(
 	if (settings.claudeAgentEnabled !== undefined) {
 		setIfMissing(AgentHostClaudeAgentEnabledEnvVar, settings.claudeAgentEnabled ? 'true' : 'false');
 	}
+	if (settings.claudeUseSubscription !== undefined) {
+		setIfMissing(AgentHostClaudeUseSubscriptionEnvVar, settings.claudeUseSubscription ? 'true' : 'false');
+	}
+	if (settings.claudeUseCli !== undefined) {
+		setIfMissing(AgentHostClaudeUseCliEnvVar, settings.claudeUseCli ? 'true' : 'false');
+	}
+	setIfMissing(AgentHostClaudeExecutablePathEnvVar, settings.claudeExecutablePath);
 	if (settings.codexAgentEnabled !== undefined) {
 		setIfMissing(AgentHostCodexAgentEnabledEnvVar, settings.codexAgentEnabled ? 'true' : 'false');
 	}
@@ -671,6 +752,13 @@ export interface IAgentModelInfo {
 	readonly provider: AgentProvider;
 	readonly id: string;
 	readonly name: string;
+	/**
+	 * Optional secondary description shown beneath the name in model pickers
+	 * (e.g. the Claude CLI's `"Sonnet 4.6 · Efficient for routine tasks"`,
+	 * where the version lives). Surfaced to clients as
+	 * `ILanguageModelChatMetadata.detail`.
+	 */
+	readonly description?: string;
 	readonly maxContextWindow?: number;
 	readonly supportsVision: boolean;
 	readonly configSchema?: ConfigSchema;
@@ -876,6 +964,16 @@ export interface IAgent {
 	 * (and differs from the default chat), the harness routes the message to
 	 * that specific chat within a multi-chat session. */
 	sendMessage(session: URI, prompt: string, attachments?: readonly MessageAttachment[], turnId?: string, chat?: URI): Promise<void>;
+
+	/**
+	 * Warm a session ahead of the first message by performing the same lazy
+	 * materialization `sendMessage` would, without sending anything. Used so
+	 * that session-scoped customizations (e.g. the agent's slash commands /
+	 * skills surfaced via {@link getSessionCustomizations}) become queryable
+	 * before the user composes their first request. Idempotent and safe to
+	 * call repeatedly; providers that need no warming simply omit it.
+	 */
+	ensureMaterialized?(session: URI): Promise<void>;
 
 	/**
 	 * Create an additional chat within an existing session, backed by a new
@@ -1151,6 +1249,15 @@ export interface IAgentService {
 	/** Dispose a session in the agent host, freeing SDK resources. */
 	disposeSession(session: URI): Promise<void>;
 
+	/**
+	 * Warm a session ahead of its first message by triggering the same lazy
+	 * materialization `sendMessage` would, without sending anything. Lets
+	 * clients surface session-scoped customizations (the agent's slash
+	 * commands / skills) before the user composes a request. Idempotent; a
+	 * no-op for providers whose sessions need no warming.
+	 */
+	warmSession(session: URI): Promise<void>;
+
 	/** Create a new terminal on the agent host. */
 	createTerminal(params: CreateTerminalParams): Promise<void>;
 
@@ -1404,6 +1511,14 @@ export interface IAgentConnection {
 	 */
 	getCompletionTriggerCharacters(): Promise<readonly string[]>;
 	disposeSession(session: URI): Promise<void>;
+
+	/**
+	 * Warm a session ahead of its first message, triggering the same lazy
+	 * materialization the first `sendMessage` would so session-scoped
+	 * customizations (the agent's slash commands / skills) become queryable
+	 * before the user composes a request. Idempotent.
+	 */
+	warmSession(session: URI): Promise<void>;
 
 	/**
 	 * Create an additional peer chat inside an existing session. `chat` is a

@@ -15,7 +15,7 @@ import { URI } from '../../../base/common/uri.js';
 import { generateUuid } from '../../../base/common/uuid.js';
 import * as os from 'os';
 import * as inspector from 'inspector';
-import { AgentHostClaudeAgentEnabledEnvVar, AgentHostCodexAgentEnabledEnvVar, AgentHostIpcChannels, IAgentHostInspectInfo, IAgentHostSocketInfo, IAgentService, IConnectionTrackerService, isAgentEnabled } from '../common/agentService.js';
+import { AgentHostClaudeAgentEnabledEnvVar, AgentHostClaudeUseCliEnvVar, AgentHostCodexAgentEnabledEnvVar, AgentHostIpcChannels, IAgentHostInspectInfo, IAgentHostSocketInfo, IAgentService, IConnectionTrackerService, isAgentEnabled } from '../common/agentService.js';
 import { AgentService } from './agentService.js';
 import { IAgentConfigurationService } from './agentConfigurationService.js';
 import { IAgentHostCompletions } from './agentHostCompletions.js';
@@ -197,7 +197,13 @@ async function startAgentHost(): Promise<void> {
 		//     env-var override or a `product.agentSdks.codex` entry.
 		// If either gate fails, the provider is not registered and never appears
 		// in the agent picker (matches the pre-CDN UX exactly).
-		if (isAgentEnabled(process.env[AgentHostClaudeAgentEnabledEnvVar], true) && (!environmentService.isBuilt || agentSdkDownloader.isAvailable(ClaudeSdkPackage))) {
+		// CLI transport spawns the user's native `claude` binary to START a
+		// session, so the downloaded SDK is not required for registration. Relax
+		// the built-product SDK-availability requirement in CLI mode only; with
+		// CLI off, the condition collapses to the original (existing behavior).
+		const claudeUseCli = isAgentEnabled(process.env[AgentHostClaudeUseCliEnvVar], false);
+		if (isAgentEnabled(process.env[AgentHostClaudeAgentEnabledEnvVar], true) && (claudeUseCli || !environmentService.isBuilt || agentSdkDownloader.isAvailable(ClaudeSdkPackage))) {
+			// ClaudeAgent reads the `…useClaudeSubscription` env var itself.
 			agentService.registerProvider(instantiationService.createInstance(ClaudeAgent));
 		}
 		if (isAgentEnabled(process.env[AgentHostCodexAgentEnabledEnvVar], false) && agentSdkDownloader.isAvailable(CodexSdkPackage)) {

@@ -8,7 +8,9 @@ import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
 import { ServicesAccessor } from '../../../../editor/browser/editorExtensions.js';
 import { localize, localize2 } from '../../../../nls.js';
 import { Action2, registerAction2 } from '../../../../platform/actions/common/actions.js';
-import { SessionsTerminalModeEnabledContext } from '../../../common/contextkeys.js';
+import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
+import { Menus } from '../../../browser/menus.js';
+import { IsPhoneLayoutContext, SessionsTerminalModeEnabledContext, SessionsWelcomeVisibleContext } from '../../../common/contextkeys.js';
 import { ConfigurationScope, Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { registerWorkbenchContribution2, WorkbenchPhase } from '../../../../workbench/common/contributions.js';
 import { ISessionsService } from '../../../services/sessions/browser/sessionsService.js';
@@ -33,6 +35,7 @@ import { IChatViewFactory } from '../../../services/chatView/browser/chatViewFac
 import { ISessionTerminalModeService, SessionTerminalModeService } from '../../../services/chatView/browser/sessionTerminalMode.js';
 import { ISessionTerminalService, SessionTerminalService } from '../../../services/chatView/browser/sessionTerminalService.js';
 import { ChatViewFactory } from './chatView.js';
+import { SessionViewModeToolbarContribution, TOGGLE_VIEW_MODE_ACTION_ID } from './sessionViewModeActionViewItem.js';
 import { CHAT_CATEGORY } from '../../../../workbench/contrib/chat/browser/actions/chatActions.js';
 import { AccessibleViewRegistry } from '../../../../platform/accessibility/browser/accessibleViewRegistry.js';
 import { SessionsChatAccessibilityHelp } from './sessionsChatAccessibilityHelp.js';
@@ -41,7 +44,7 @@ import { WorktreeCreatedTaskDispatcher, AGENT_HOST_RUN_WORKTREE_CREATED_TASKS_SE
 import { AGENT_SESSIONS_SCOPED_INPUT_HISTORY_SETTING } from './sessionsChatHistory.js';
 import '../../sessions/browser/mobile/mobileOverlayContribution.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
-import { EditorAreaFocusContext } from '../../../../workbench/common/contextkeys.js';
+import { EditorAreaFocusContext, IsAuxiliaryWindowContext } from '../../../../workbench/common/contextkeys.js';
 import { NEW_SESSION_ACTION_ID } from '../common/constants.js';
 
 
@@ -86,6 +89,38 @@ registerAction2(NewChatInSessionsWindowAction);
 
 
 /**
+ * Anchor action for the view-mode segmented toggle in the session title bar.
+ * The visual control is supplied by {@link SessionViewModeActionViewItem}; this
+ * action provides the menu slot, the command-palette/keyboard entry point, and
+ * the fallback when the custom view item is unavailable. It toggles between
+ * Terminal (TUI) and the normal GUI chat.
+ */
+class ToggleSessionViewModeAction extends Action2 {
+
+	constructor() {
+		super({
+			id: TOGGLE_VIEW_MODE_ACTION_ID,
+			title: localize2('toggleViewMode', "Toggle Session View Mode (TUI / GUI)"),
+			f1: true,
+			icon: Codicon.window,
+			menu: [{
+				id: Menus.TitleBarSessionMenu,
+				group: 'navigation',
+				order: 11,
+				when: ContextKeyExpr.and(IsAuxiliaryWindowContext.toNegated(), SessionsWelcomeVisibleContext.toNegated(), IsPhoneLayoutContext.negate()),
+			}]
+		});
+	}
+
+	override run(accessor: ServicesAccessor): void {
+		accessor.get(ISessionTerminalModeService).toggle();
+	}
+}
+
+registerAction2(ToggleSessionViewModeAction);
+
+
+/**
  * Global toggle that switches every eligible session's center pane between the
  * GUI chat and an embedded native `claude` CLI terminal. Exposed as a command
  * so it is reachable from the command palette and keybindings.
@@ -121,6 +156,7 @@ registerWorkbenchContribution2(RunScriptContribution.ID, RunScriptContribution, 
 registerWorkbenchContribution2(SessionsOpenerParticipantContribution.ID, SessionsOpenerParticipantContribution, WorkbenchPhase.BlockStartup);
 registerWorkbenchContribution2(RegisterDefaultSessionTaskRunnersContribution.ID, RegisterDefaultSessionTaskRunnersContribution, WorkbenchPhase.BlockStartup);
 registerWorkbenchContribution2(WorktreeCreatedTaskDispatcher.ID, WorktreeCreatedTaskDispatcher, WorkbenchPhase.AfterRestored);
+registerWorkbenchContribution2(SessionViewModeToolbarContribution.ID, SessionViewModeToolbarContribution, WorkbenchPhase.BlockStartup);
 
 // register services
 registerSingleton(IPromptsService, AgenticPromptsService, InstantiationType.Delayed);

@@ -172,6 +172,12 @@ export class MockChatSessionsService implements IChatSessionsService {
 		return provider.provideChatInputCompletions(sessionResource, params, token);
 	}
 
+	async prewarmChatSession(sessionResource: URI): Promise<void> {
+		const sessionType = getChatSessionType(sessionResource);
+		const provider = this.contentProviders.get(sessionType);
+		await provider?.prewarmChatSession?.(sessionResource);
+	}
+
 	async getChatInputCompletionTriggerCharacters(sessionType: string): Promise<readonly string[] | undefined> {
 		const provider = this.contentProviders.get(sessionType);
 		if (!provider) {

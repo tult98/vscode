@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import type { AgentInfo, McpServerStatus, PermissionMode, Query, SDKUserMessage, SlashCommand, WarmQuery } from '@anthropic-ai/claude-agent-sdk';
+import type { AgentInfo, McpServerStatus, ModelInfo, PermissionMode, Query, SDKUserMessage, SlashCommand, WarmQuery } from '@anthropic-ai/claude-agent-sdk';
 import { CancellationError, isCancellationError } from '../../../../base/common/errors.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable, IReference, toDisposable } from '../../../../base/common/lifecycle.js';
@@ -100,6 +100,19 @@ export class ClaudeSdkPipeline extends Disposable {
 			query.mcpServerStatus(),
 		]);
 		return { commands, agents, mcpServers };
+	}
+
+	/**
+	 * The models the running Claude instance reports as available — the SDK /
+	 * CLI's view from its `initialize` handshake (account entitlements,
+	 * managed-settings allowlists, etc.), read via {@link Query.supportedModels}.
+	 * Binds the Query without issuing a user prompt (same pre-flight pattern as
+	 * {@link snapshotResolvedCustomizations}), so it can populate the model
+	 * picker before the first message is sent.
+	 */
+	async discoverModels(): Promise<readonly ModelInfo[]> {
+		const query = await this._ensureQueryBound();
+		return query.supportedModels();
 	}
 
 	/**

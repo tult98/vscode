@@ -12,7 +12,7 @@ import { PolicyCategory } from '../../../../base/common/policy.js';
 import '../../../../platform/agentHost/common/agentHost.config.contribution.js';
 import '../../../../platform/agentHost/browser/agentHost.config.contribution.js';
 import '../../../../platform/agentHost/common/agentHostStarter.config.contribution.js';
-import { AgentHostAhpJsonlLoggingSettingId, AgentHostCustomTerminalToolEnabledSettingId, AgentHostSdkSandboxEnabledSettingId, ClaudePreferAgentHostAgentsSettingId, ClaudePreferAgentHostEditorSettingId } from '../../../../platform/agentHost/common/agentService.js';
+import { AgentHostAhpJsonlLoggingSettingId, AgentHostCustomTerminalToolEnabledSettingId, AgentHostSdkSandboxEnabledSettingId, ClaudeNativeCliSettingId, ClaudePreferAgentHostAgentsSettingId, ClaudePreferAgentHostEditorSettingId } from '../../../../platform/agentHost/common/agentService.js';
 import { AgentNetworkFilterService, IAgentNetworkFilterService } from '../../../../platform/networkFilter/common/networkFilterService.js';
 import { AgentNetworkDomainSettingId } from '../../../../platform/networkFilter/common/settings.js';
 import { COPILOT_DISABLE_BYPASS_PERMISSIONS_MODE_KEY, COPILOT_ENABLED_PLUGINS_KEY, COPILOT_EXTRA_MARKETPLACES_KEY, COPILOT_STRICT_MARKETPLACES_KEY } from '../../../../platform/policy/common/copilotManagedSettings.js';
@@ -723,6 +723,13 @@ configurationRegistry.registerConfiguration({
 		[ClaudePreferAgentHostEditorSettingId]: {
 			type: 'boolean',
 			description: nls.localize('chat.editor.claude.preferAgentHost', "When enabled, Claude sessions opened from the regular workbench (sidebar chat) run inside the agent host process instead of the GitHub Copilot Chat extension. Only one Claude implementation surfaces per window."),
+			default: false,
+			tags: ['experimental'],
+			experiment: { mode: 'startup' },
+		},
+		[ClaudeNativeCliSettingId]: {
+			type: 'boolean',
+			markdownDescription: nls.localize('chat.agents.claude.nativeCli', "When enabled, Claude Code in the Agents Window is provided by the agent host and its GUI chat is driven by your native `claude` CLI instead of GitHub Copilot — the Claude Agent SDK is not used. The CLI authenticates from your existing `claude login`. The agent host process must be restarted for changes to take effect. The separate \"Use Claude CLI\" toggle (raw embedded terminal) is unaffected by this setting."),
 			default: false,
 			tags: ['experimental'],
 			experiment: { mode: 'startup' },

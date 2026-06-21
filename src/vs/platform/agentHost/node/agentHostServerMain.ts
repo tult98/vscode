@@ -45,7 +45,7 @@ import { AgentSdkDownloader, IAgentSdkDownloader } from './agentSdkDownloader.js
 import { IAgentHostOTelService } from '../common/otel/agentHostOTelService.js';
 import { AgentHostOTelService } from './otel/agentHostOTelService.js';
 import { AgentService } from './agentService.js';
-import { AgentHostClaudeAgentEnabledEnvVar, AgentHostClaudeSdkRootEnvVar, AgentHostCodexAgentEnabledEnvVar, IAgentService, AgentHostCodexAgentSdkRootEnvVar, isAgentEnabled } from '../common/agentService.js';
+import { AgentHostClaudeAgentEnabledEnvVar, AgentHostClaudeSdkRootEnvVar, AgentHostClaudeUseCliEnvVar, AgentHostCodexAgentEnabledEnvVar, IAgentService, AgentHostCodexAgentSdkRootEnvVar, isAgentEnabled } from '../common/agentService.js';
 import { IAgentConfigurationService } from './agentConfigurationService.js';
 import { IAgentHostCompletions } from './agentHostCompletions.js';
 import { IAgentHostTerminalManager } from './agentHostTerminalManager.js';
@@ -296,7 +296,13 @@ async function main(): Promise<void> {
 		//     SDK comes from the CLI flag / env var dev override or a
 		//     `product.agentSdks.claude` entry. Codex still requires the
 		//     env-var override or product config.
-		if (isAgentEnabled(process.env[AgentHostClaudeAgentEnabledEnvVar], true) && (!environmentService.isBuilt || agentSdkDownloader.isAvailable(ClaudeSdkPackage))) {
+		// CLI transport spawns the user's native `claude` binary to START a
+		// session, so the downloaded SDK is not required for registration. Relax
+		// the built-product SDK-availability requirement in CLI mode only; with
+		// CLI off, the condition collapses to the original (existing behavior).
+		const claudeUseCli = isAgentEnabled(process.env[AgentHostClaudeUseCliEnvVar], false);
+		if (isAgentEnabled(process.env[AgentHostClaudeAgentEnabledEnvVar], true) && (claudeUseCli || !environmentService.isBuilt || agentSdkDownloader.isAvailable(ClaudeSdkPackage))) {
+			// ClaudeAgent reads the `…useClaudeSubscription` env var itself.
 			const claudeAgent = disposables.add(instantiationService.createInstance(ClaudeAgent));
 			agentService.registerProvider(claudeAgent);
 			log('ClaudeAgent registered');

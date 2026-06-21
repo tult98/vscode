@@ -925,6 +925,13 @@ export class ChatSessionsService extends Disposable implements IChatSessionsServ
 		return provider.provideChatInputCompletions(sessionResource, params, token);
 	}
 
+	async prewarmChatSession(sessionResource: URI): Promise<void> {
+		const sessionType = getChatSessionType(sessionResource);
+		const resolvedType = this._resolveToPrimaryType(sessionType) || sessionType;
+		const provider = this._contentProviders.get(resolvedType);
+		await provider?.prewarmChatSession?.(sessionResource);
+	}
+
 	async getChatInputCompletionTriggerCharacters(sessionType: string): Promise<readonly string[] | undefined> {
 		const resolvedType = this._resolveToPrimaryType(sessionType) || sessionType;
 		const provider = this._contentProviders.get(resolvedType);
