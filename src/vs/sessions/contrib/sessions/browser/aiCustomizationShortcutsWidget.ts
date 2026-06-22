@@ -22,6 +22,7 @@ import { ICustomizationHarnessService } from '../../../../workbench/contrib/chat
 import { CUSTOMIZATION_ITEMS, SESSIONS_CUSTOMIZATIONS_SIDEBAR_MODE_SETTING, SessionsCustomizationsSidebarMode } from './customizationsToolbar.contribution.js';
 import { Menus } from '../../../browser/menus.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { ClaudeNativeCliSettingId } from '../../../../platform/agentHost/common/agentService.js';
 import { IEditorService } from '../../../../workbench/services/editor/common/editorService.js';
 import { AICustomizationManagementEditor } from '../../../../workbench/contrib/chat/browser/aiCustomization/aiCustomizationManagementEditor.js';
 import { AICustomizationManagementEditorInput } from '../../../../workbench/contrib/chat/browser/aiCustomization/aiCustomizationManagementEditorInput.js';
@@ -71,6 +72,13 @@ export class AICustomizationShortcutsWidget extends Disposable {
 		// behavior differs, resolved at click-time in the contribution), so
 		// toggling between them needs no re-render.
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
+			// The native-CLI toggle hides/shows the whole section, so always
+			// re-render and re-layout when it changes.
+			if (e.affectsConfiguration(ClaudeNativeCliSettingId)) {
+				this._renderForCurrentMode();
+				this._options?.onDidChangeLayout?.();
+				return;
+			}
 			if (e.affectsConfiguration(SESSIONS_CUSTOMIZATIONS_SIDEBAR_MODE_SETTING)) {
 				const isSingle = this._readMode() === SessionsCustomizationsSidebarMode.Single;
 				if (isSingle !== this._renderedSingle) {
@@ -79,6 +87,12 @@ export class AICustomizationShortcutsWidget extends Disposable {
 				}
 			}
 		}));
+	}
+
+	private _isHiddenByNativeCli(): boolean {
+		// When Claude Code is driven by the native `claude` CLI, the AI
+		// customizations do not apply, so the whole section is hidden.
+		return this.configurationService.getValue<boolean>(ClaudeNativeCliSettingId) === true;
 	}
 
 	private _readMode(): SessionsCustomizationsSidebarMode {
@@ -97,6 +111,15 @@ export class AICustomizationShortcutsWidget extends Disposable {
 		this._headerButton = undefined;
 		this._singleButton = undefined;
 		DOM.clearNode(this._wrapper);
+
+		// Collapse the section to zero height when hidden so the sessions list
+		// reflows into the freed space.
+		if (this._isHiddenByNativeCli()) {
+			this._wrapper.style.display = 'none';
+			this._renderedSingle = undefined;
+			return;
+		}
+		this._wrapper.style.display = '';
 
 		const mode = this._readMode();
 		const isSingle = mode === SessionsCustomizationsSidebarMode.Single;
