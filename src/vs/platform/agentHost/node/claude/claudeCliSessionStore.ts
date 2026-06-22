@@ -12,8 +12,8 @@ import { ILogService } from '../../../log/common/log.js';
 /**
  * Filesystem-backed reader for the native `claude` CLI's on-disk session
  * store. Used by {@link ClaudeAgentSdkService} when CLI transport is active
- * (`chat.agents.claude.nativeCli` / `chat.agentHost.claudeAgent.useCli`) so the
- * read paths — listing sessions for the sidebar and replaying transcripts —
+ * (`chat.agents.claude.nativeCli`) so the read paths — listing sessions for the
+ * sidebar and replaying transcripts —
  * work WITHOUT loading the `@anthropic-ai/claude-agent-sdk` module. This is the
  * piece that lets a built product surface Claude history when the SDK is not
  * bundled.

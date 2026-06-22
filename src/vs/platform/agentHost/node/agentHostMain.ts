@@ -203,7 +203,8 @@ async function startAgentHost(): Promise<void> {
 		// CLI off, the condition collapses to the original (existing behavior).
 		const claudeUseCli = isAgentEnabled(process.env[AgentHostClaudeUseCliEnvVar], false);
 		if (isAgentEnabled(process.env[AgentHostClaudeAgentEnabledEnvVar], true) && (claudeUseCli || !environmentService.isBuilt || agentSdkDownloader.isAvailable(ClaudeSdkPackage))) {
-			// ClaudeAgent reads the `…useClaudeSubscription` env var itself.
+			// ClaudeAgent reads the `…USE_CLI` env var itself (CLI transport
+			// implies subscription-style auth).
 			agentService.registerProvider(instantiationService.createInstance(ClaudeAgent));
 		}
 		if (isAgentEnabled(process.env[AgentHostCodexAgentEnabledEnvVar], false) && agentSdkDownloader.isAvailable(CodexSdkPackage)) {

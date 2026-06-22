@@ -302,7 +302,8 @@ async function main(): Promise<void> {
 		// CLI off, the condition collapses to the original (existing behavior).
 		const claudeUseCli = isAgentEnabled(process.env[AgentHostClaudeUseCliEnvVar], false);
 		if (isAgentEnabled(process.env[AgentHostClaudeAgentEnabledEnvVar], true) && (claudeUseCli || !environmentService.isBuilt || agentSdkDownloader.isAvailable(ClaudeSdkPackage))) {
-			// ClaudeAgent reads the `…useClaudeSubscription` env var itself.
+			// ClaudeAgent reads the `…USE_CLI` env var itself (CLI transport
+			// implies subscription-style auth).
 			const claudeAgent = disposables.add(instantiationService.createInstance(ClaudeAgent));
 			agentService.registerProvider(claudeAgent);
 			log('ClaudeAgent registered');

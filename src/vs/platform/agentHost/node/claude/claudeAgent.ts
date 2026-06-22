@@ -23,7 +23,7 @@ import { createSchema, platformSessionSchema, schemaProperty } from '../../commo
 import { ClaudePermissionMode, ClaudeSessionConfigKey, narrowClaudePermissionMode } from '../../common/claudeSessionConfigKeys.js';
 import { createClaudeThinkingLevelSchema, isClaudeEffortLevel } from '../../common/claudeModelConfig.js';
 import { SessionConfigKey } from '../../common/sessionConfigKeys.js';
-import { AgentHostClaudeUseCliEnvVar, AgentHostClaudeUseSubscriptionEnvVar, AgentProvider, AgentSession, AgentSignal, GITHUB_COPILOT_PROTECTED_RESOURCE, IAgent, IAgentCreateSessionConfig, IAgentCreateSessionResult, IAgentDescriptor, IAgentMaterializeSessionEvent, IAgentModelInfo, IAgentResolveSessionConfigParams, IAgentSessionConfigCompletionsParams, IAgentSessionMetadata, IAgentSessionProjectInfo, isAgentEnabled } from '../../common/agentService.js';
+import { AgentHostClaudeUseCliEnvVar, AgentProvider, AgentSession, AgentSignal, GITHUB_COPILOT_PROTECTED_RESOURCE, IAgent, IAgentCreateSessionConfig, IAgentCreateSessionResult, IAgentDescriptor, IAgentMaterializeSessionEvent, IAgentModelInfo, IAgentResolveSessionConfigParams, IAgentSessionConfigCompletionsParams, IAgentSessionMetadata, IAgentSessionProjectInfo, isAgentEnabled } from '../../common/agentService.js';
 import { ActionType } from '../../common/state/sessionActions.js';
 import type { ResolveSessionConfigResult, SessionConfigCompletionsResult } from '../../common/state/protocol/commands.js';
 import { AHP_AUTH_REQUIRED, ProtocolError } from '../../common/state/sessionProtocol.js';
@@ -135,7 +135,7 @@ function toAgentModelInfoFromSdk(m: ModelInfo, provider: AgentProvider): IAgentM
 
 /**
  * Static Claude model catalogue advertised when the agent runs in
- * **subscription mode** (`chat.agentHost.claudeAgent.useClaudeSubscription`).
+ * **subscription mode** (CLI transport, `chat.agents.claude.nativeCli`).
  * In that mode there is no GitHub token and no Copilot proxy, so we cannot
  * enumerate models from CAPI; we publish a curated list instead. Ids are in
  * the canonical dotted endpoint format (`ModelSelection.id`); the
@@ -297,7 +297,7 @@ export class ClaudeAgent extends Disposable implements IAgent {
 	}
 
 	/**
-	 * Subscription mode (`chat.agentHost.claudeAgent.useClaudeSubscription`):
+	 * Subscription mode (implied by CLI transport, `chat.agents.claude.nativeCli`):
 	 * authenticate directly against Anthropic with the user's Claude Pro/Max
 	 * credentials instead of routing through the GitHub Copilot proxy. When
 	 * set, the agent declares no protected resources, never starts the proxy,
@@ -318,15 +318,13 @@ export class ClaudeAgent extends Disposable implements IAgent {
 		@IProductService private readonly _productService: IProductService,
 	) {
 		super();
-		// Read the subscription toggle from the env var the agent host starter
-		// forwards from `chat.agentHost.claudeAgent.useClaudeSubscription`. Kept
-		// out of the constructor signature so the DI `createInstance(ClaudeAgent)`
-		// call sites (and tests) stay arg-free.
 		// CLI transport implies subscription-style auth: the spawned `claude`
 		// binary talks to Anthropic directly, so the proxy / Copilot sign-in
-		// path must be bypassed exactly as in subscription mode.
-		const useCli = isAgentEnabled(process.env[AgentHostClaudeUseCliEnvVar], false);
-		this._useSubscription = isAgentEnabled(process.env[AgentHostClaudeUseSubscriptionEnvVar], false) || useCli;
+		// path must be bypassed. Read from the env var the agent host starter
+		// forwards from `chat.agents.claude.nativeCli`; kept out of the
+		// constructor signature so the DI `createInstance(ClaudeAgent)` call
+		// sites (and tests) stay arg-free.
+		this._useSubscription = isAgentEnabled(process.env[AgentHostClaudeUseCliEnvVar], false);
 		this._metadataStore = _instantiationService.createInstance(ClaudeSessionMetadataStore, this.id);
 		if (this._useSubscription) {
 			// Subscription mode: no CAPI, so publish the static model catalogue

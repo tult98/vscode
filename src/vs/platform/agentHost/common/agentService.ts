@@ -104,42 +104,16 @@ export const AgentHostClaudeAgentEnabledEnvVar = 'VSCODE_AGENT_HOST_CLAUDE_AGENT
 export const AgentHostCodexAgentEnabledEnvVar = 'VSCODE_AGENT_HOST_CODEX_AGENT_ENABLED';
 
 /**
- * Configuration key controlling whether the agent host's Claude provider talks
- * to Anthropic **directly using the user's Claude Pro/Max subscription** instead
- * of routing through the GitHub Copilot proxy (CAPI). When `true`, the Claude
- * provider declares no protected resources (so no GitHub sign-in is required),
- * never starts the Copilot proxy, advertises a static Claude model list, and
- * lets the Claude Agent SDK authenticate against `api.anthropic.com` using the
- * ambient Claude Code credentials (run `claude setup-token` / `claude login`, or
- * export `CLAUDE_CODE_OAUTH_TOKEN`). Defaults to `false` (Copilot-proxy path).
- * The agent host process must be restarted for changes to take effect.
- */
-export const AgentHostClaudeUseSubscriptionSettingId = 'chat.agentHost.claudeAgent.useClaudeSubscription';
-
-/**
- * Environment variable form of {@link AgentHostClaudeUseSubscriptionSettingId}.
- * Set by the agent host starters from the setting. Accepts `'true'` /
- * `'false'`; absent means "default" (`false`).
- */
-export const AgentHostClaudeUseSubscriptionEnvVar = 'VSCODE_AGENT_HOST_CLAUDE_USE_SUBSCRIPTION';
-
-/**
- * Configuration key controlling whether the agent host's Claude provider drives
+ * Environment variable that tells the agent host's Claude provider to drive
  * responses by spawning the user's installed `claude` CLI binary (headless
- * stream-json transport) instead of the in-process Claude Agent SDK. When
- * `true`, the GUI authenticates from the user's existing `claude login`
- * (keychain / `~/.claude/.credentials.json`) with no `CLAUDE_CODE_OAUTH_TOKEN`
- * required — the standalone binary can read the keychain where the Electron
- * utility process cannot. Implies subscription mode (no Copilot proxy, no
- * GitHub sign-in, static model catalogue). Defaults to `false`. The agent host
- * process must be restarted for changes to take effect.
- */
-export const AgentHostClaudeUseCliSettingId = 'chat.agentHost.claudeAgent.useCli';
-
-/**
- * Environment variable form of {@link AgentHostClaudeUseCliSettingId}. Set by
- * the agent host starters from the setting. Accepts `'true'` / `'false'`;
- * absent means "default" (`false`).
+ * stream-json transport) instead of the in-process Claude Agent SDK. Set by the
+ * agent host starters from {@link ClaudeNativeCliSettingId}. When `'true'`, the
+ * GUI authenticates from the user's existing `claude login` (keychain /
+ * `~/.claude/.credentials.json`) with no `CLAUDE_CODE_OAUTH_TOKEN` required —
+ * the standalone binary can read the keychain where the Electron utility
+ * process cannot. Implies subscription-style auth (no Copilot proxy, no GitHub
+ * sign-in, static model catalogue). Accepts `'true'` / `'false'`; absent means
+ * "default" (`false`).
  */
 export const AgentHostClaudeUseCliEnvVar = 'VSCODE_AGENT_HOST_CLAUDE_USE_CLI';
 
@@ -218,11 +192,11 @@ export const ClaudePreferAgentHostEditorSettingId = 'chat.editor.claude.preferAg
  *  - the agent host's Claude provider is surfaced (like
  *    {@link ClaudePreferAgentHostAgentsSettingId}), so "Claude Code" is the
  *    Claude implementation in the window, and
- *  - the agent host drives the GUI chat via CLI transport (implies
- *    {@link AgentHostClaudeUseCliSettingId}): it spawns the native `claude`
- *    binary in headless `stream-json` mode, so the Claude Agent SDK is never
- *    invoked at runtime and the CLI authenticates from the user's own
- *    `claude login`.
+ *  - the agent host drives the GUI chat via CLI transport (forwarded as the
+ *    starters' `claudeUseCli` / {@link AgentHostClaudeUseCliEnvVar}): it spawns
+ *    the native `claude` binary in headless `stream-json` mode, so the Claude
+ *    Agent SDK is never invoked at runtime and the CLI authenticates from the
+ *    user's own `claude login`.
  *
  * The transport leg is forwarded to the agent host process at spawn (see the
  * starters' `claudeUseCli`), so it is startup-only — the agent host must be
@@ -441,7 +415,6 @@ export interface IAgentSdkStarterSettings {
 	readonly codexHome?: string;
 	readonly codexBinaryArgs?: readonly string[];
 	readonly claudeAgentEnabled?: boolean;
-	readonly claudeUseSubscription?: boolean;
 	readonly claudeUseCli?: boolean;
 	readonly codexAgentEnabled?: boolean;
 }
@@ -464,9 +437,6 @@ export function buildAgentSdkEnv(
 	}
 	if (settings.claudeAgentEnabled !== undefined) {
 		setIfMissing(AgentHostClaudeAgentEnabledEnvVar, settings.claudeAgentEnabled ? 'true' : 'false');
-	}
-	if (settings.claudeUseSubscription !== undefined) {
-		setIfMissing(AgentHostClaudeUseSubscriptionEnvVar, settings.claudeUseSubscription ? 'true' : 'false');
 	}
 	if (settings.claudeUseCli !== undefined) {
 		setIfMissing(AgentHostClaudeUseCliEnvVar, settings.claudeUseCli ? 'true' : 'false');

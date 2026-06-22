@@ -35,7 +35,7 @@ import { IInstantiationService } from '../../../instantiation/common/instantiati
 import { ILogService, NullLogService } from '../../../log/common/log.js';
 import { IProductService } from '../../../product/common/productService.js';
 import { FileService } from '../../../files/common/fileService.js';
-import { IAgentMaterializeSessionEvent, AgentHostClaudeUseSubscriptionEnvVar, AgentSession, AgentSignal, GITHUB_COPILOT_PROTECTED_RESOURCE } from '../../common/agentService.js';
+import { IAgentMaterializeSessionEvent, AgentHostClaudeUseCliEnvVar, AgentSession, AgentSignal, GITHUB_COPILOT_PROTECTED_RESOURCE } from '../../common/agentService.js';
 import { AgentFeedbackAttachmentDisplayKind } from '../../common/agentFeedbackAttachments.js';
 import { ActionType } from '../../common/state/sessionActions.js';
 import { CustomizationLoadStatus, CustomizationType, MessageAttachmentKind, MessageKind, ResponsePartKind, ChatInputResponseKind, SessionStatus, ToolResultContentType, buildSubagentSessionUri, customizationId, type ClientPluginCustomization, type PluginCustomization } from '../../common/state/sessionState.js';
@@ -1415,17 +1415,17 @@ suite('ClaudeAgent', () => {
 	});
 
 	suite('subscription-mode model discovery', () => {
-		/** Run `body` with the subscription env var forced on, restoring it after. */
+		/** Run `body` with CLI transport (which implies subscription mode) forced on, restoring it after. */
 		async function withSubscriptionMode(body: () => Promise<void>): Promise<void> {
-			const prev = process.env[AgentHostClaudeUseSubscriptionEnvVar];
-			process.env[AgentHostClaudeUseSubscriptionEnvVar] = '1';
+			const prev = process.env[AgentHostClaudeUseCliEnvVar];
+			process.env[AgentHostClaudeUseCliEnvVar] = '1';
 			try {
 				await body();
 			} finally {
 				if (prev === undefined) {
-					delete process.env[AgentHostClaudeUseSubscriptionEnvVar];
+					delete process.env[AgentHostClaudeUseCliEnvVar];
 				} else {
-					process.env[AgentHostClaudeUseSubscriptionEnvVar] = prev;
+					process.env[AgentHostClaudeUseCliEnvVar] = prev;
 				}
 			}
 		}
