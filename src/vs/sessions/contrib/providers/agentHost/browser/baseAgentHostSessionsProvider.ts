@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { disposableTimeout, raceTimeout } from '../../../../../base/common/async.js';
+import { disposableTimeout, raceTimeout, RunOnceScheduler } from '../../../../../base/common/async.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { arrayEquals, structuralEquals } from '../../../../../base/common/equals.js';
@@ -1232,6 +1232,14 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 
 	/** True while a {@link _refreshSessions} call is awaiting `listSessions()`. */
 	private _sessionRefreshInFlight = false;
+
+	/**
+	 * Debounced re-list triggered when a `sessionSummaryChanged` notification
+	 * arrives for a session not yet in the cache (e.g. an out-of-band terminal
+	 * session the host just discovered). Coalesces bursts so a flurry of
+	 * activity on a freshly created session causes a single refresh.
+	 */
+	private readonly _unknownSessionRefreshScheduler = this._register(new RunOnceScheduler(() => this._refreshSessions(), 300));
 
 	constructor(
 		@IChatSessionsService protected readonly _chatSessionsService: IChatSessionsService,
@@ -2814,13 +2822,18 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 	}
 
 	private _handleSessionSummaryChanged(session: string, changes: Partial<SessionSummary>): void {
+		const rawId = AgentSession.id(session);
+		const cached = this._sessionCache.get(rawId);
+		if (!cached) {
+			// A summary changed for a session we have not cached yet. This is how
+			// an out-of-band session — e.g. a terminal-only Claude session the
+			// agent host just discovered on disk — first becomes known: re-list
+			// so it is reconciled into the cache (with its live status). The
+			// scheduler coalesces bursts of these for newly active sessions.
+			this._unknownSessionRefreshScheduler.schedule();
+			return;
+		}
 		transaction((tx) => {
-			const rawId = AgentSession.id(session);
-			const cached = this._sessionCache.get(rawId);
-			if (!cached) {
-				return;
-			}
-
 			let didChange = false;
 
 			if (changes.status !== undefined) {

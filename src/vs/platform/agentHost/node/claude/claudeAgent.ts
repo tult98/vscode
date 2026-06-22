@@ -8,12 +8,13 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { SequencerByKey } from '../../../../base/common/async.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { CancellationError } from '../../../../base/common/errors.js';
-import { Emitter } from '../../../../base/common/event.js';
+import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable, DisposableMap, IDisposable } from '../../../../base/common/lifecycle.js';
 import { constObservable, IObservable } from '../../../../base/common/observable.js';
 import { URI } from '../../../../base/common/uri.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { localize } from '../../../../nls.js';
+import { IFileService } from '../../../files/common/files.js';
 import { IInstantiationService } from '../../../instantiation/common/instantiation.js';
 import { ILogService } from '../../../log/common/log.js';
 import { IAgentPluginManager, ISyncedCustomization } from '../../common/agentPluginManager.js';
@@ -21,11 +22,11 @@ import { createSchema, platformSessionSchema, schemaProperty } from '../../commo
 import { ClaudePermissionMode, ClaudeSessionConfigKey, narrowClaudePermissionMode } from '../../common/claudeSessionConfigKeys.js';
 import { SessionConfigKey } from '../../common/sessionConfigKeys.js';
 import { AgentHostClaudeUseCliEnvVar, AgentProvider, AgentSession, AgentSignal, GITHUB_COPILOT_PROTECTED_RESOURCE, IAgent, IAgentCreateSessionConfig, IAgentCreateSessionResult, IAgentDescriptor, IAgentMaterializeSessionEvent, IAgentModelInfo, IAgentResolveSessionConfigParams, IAgentSessionConfigCompletionsParams, IAgentSessionMetadata, IAgentSessionProjectInfo, isAgentEnabled } from '../../common/agentService.js';
-import { ActionType } from '../../common/state/sessionActions.js';
+import { ActionType, NotificationType, type INotification } from '../../common/state/sessionActions.js';
 import type { ResolveSessionConfigResult, SessionConfigCompletionsResult } from '../../common/state/protocol/commands.js';
 import { AHP_AUTH_REQUIRED, ProtocolError } from '../../common/state/sessionProtocol.js';
 import { ProtectedResourceMetadata, type AgentSelection, type ModelSelection, type ToolDefinition } from '../../common/state/protocol/state.js';
-import { isSubagentSession, parseSubagentSessionUri, ChatInputResponseKind, type ClientPluginCustomization, type Customization, type MessageAttachment, type PendingMessage, type ChatInputAnswer, type ToolCallResult, type Turn } from '../../common/state/sessionState.js';
+import { isSubagentSession, parseSubagentSessionUri, ChatInputResponseKind, ROOT_STATE_URI, SessionStatus, type ClientPluginCustomization, type Customization, type MessageAttachment, type PendingMessage, type ChatInputAnswer, type ToolCallResult, type Turn } from '../../common/state/sessionState.js';
 import { IAgentConfigurationService } from '../agentConfigurationService.js';
 import { IAgentHostGitService } from '../agentHostGitService.js';
 import { PendingRequestRegistry } from '../../common/pendingRequestRegistry.js';
@@ -40,6 +41,7 @@ import { resolvePromptToContentBlocks } from './claudePromptResolver.js';
 import { IClaudeProxyHandle, IClaudeProxyService } from './claudeProxyService.js';
 import { readClaudePermissionMode } from './claudeSessionPermissionMode.js';
 import { ClaudeSessionMetadataStore, IClaudeSessionOverlay } from './claudeSessionMetadataStore.js';
+import { ClaudeCliSessionStatus, ClaudeCliSessionWatcher, IClaudeCliSessionChange } from './claudeCliSessionWatcher.js';
 
 // Single source of truth for narrowing an arbitrary runtime value to
 // the closed `ClaudePermissionMode` union now lives in
@@ -54,6 +56,15 @@ import { ClaudeSessionMetadataStore, IClaudeSessionOverlay } from './claudeSessi
 // (pre-materialize fields: project, abortController, provisionalModel,
 // provisionalConfig). The legacy `IClaudeProvisionalSession` map shape
 // was retired in Phase 10.5 Step 3a.
+
+/** Map the CLI's reported session status onto the protocol `SessionStatus`. */
+function toProtocolStatus(status: ClaudeCliSessionStatus): SessionStatus {
+	switch (status) {
+		case 'busy': return SessionStatus.InProgress;
+		case 'waiting': return SessionStatus.InputNeeded;
+		case 'idle': return SessionStatus.Idle;
+	}
+}
 
 /**
  * Phase 4 skeleton {@link IAgent} provider for the Claude Agent SDK.
@@ -129,6 +140,24 @@ export class ClaudeAgent extends Disposable implements IAgent {
 	readonly onDidMaterializeSession = this._onDidMaterializeSession.event;
 
 	/**
+	 * Ephemeral protocol notifications this agent raises directly, forwarded
+	 * to clients by {@link IAgentService.registerProvider}. Used to surface
+	 * live changes to terminal-only Claude sessions (created and advanced by an
+	 * external `claude` CLI) that never flow through the in-process turn
+	 * lifecycle. See {@link _cliWatcher} / {@link _handleCliSessionChange}.
+	 */
+	private readonly _onDidEmitNotification = this._register(new Emitter<INotification>());
+	readonly onDidEmitNotification: Event<INotification> = this._onDidEmitNotification.event;
+
+	/**
+	 * Watches the native `claude` CLI's on-disk session store for live
+	 * lifecycle / activity changes. Present only in subscription (CLI) mode,
+	 * where Claude runs terminal-only and the agent host does not orchestrate
+	 * turns. `undefined` in Copilot-proxy mode.
+	 */
+	private readonly _cliWatcher: ClaudeCliSessionWatcher | undefined;
+
+	/**
 	 * Per-session-id serializer shared by {@link disposeSession} and
 	 * {@link shutdown}. Phase 5 dispose work is synchronous, so the queued
 	 * tasks resolve immediately and the sequencer is mostly a no-op. The
@@ -181,6 +210,7 @@ export class ClaudeAgent extends Disposable implements IAgent {
 		@IAgentConfigurationService private readonly _configurationService: IAgentConfigurationService,
 		@IInstantiationService private readonly _instantiationService: IInstantiationService,
 		@IAgentPluginManager private readonly _pluginManager: IAgentPluginManager,
+		@IFileService private readonly _fileService: IFileService,
 	) {
 		super();
 		// CLI transport implies subscription-style auth: the spawned `claude`
@@ -204,6 +234,14 @@ export class ClaudeAgent extends Disposable implements IAgent {
 			const oauthTok = process.env.CLAUDE_CODE_OAUTH_TOKEN;
 			const apiKey = process.env.ANTHROPIC_API_KEY;
 			this._logService.info(`[Claude] Direct-auth credentials visible to agent host: CLAUDE_CODE_OAUTH_TOKEN(len=${oauthTok?.length ?? 0}, prefix=${oauthTok?.slice(0, 13) ?? '-'}), ANTHROPIC_API_KEY(len=${apiKey?.length ?? 0})`);
+			// Terminal-only Claude sessions are created and advanced by the
+			// external `claude` CLI, so the only realtime signal that a session
+			// appeared or is working is its transcript file being written.
+			// Watch the CLI store and translate that into protocol notifications
+			// so the session list and working indicators stay live without a
+			// reload. See `claudeCliSessionWatcher.ts`.
+			this._cliWatcher = this._register(new ClaudeCliSessionWatcher(this._fileService, this._logService));
+			this._register(this._cliWatcher.onDidChangeSession(e => this._handleCliSessionChange(e)));
 			return;
 		}
 		// CAPI reports each request's billed credits via the proxy (the SDK
@@ -213,6 +251,23 @@ export class ClaudeAgent extends Disposable implements IAgent {
 		this._register(this._claudeProxyService.onDidReportCredits(e => {
 			this._findAnySession(e.sessionId)?.recordTurnCredits(e.totalNanoAiu);
 		}));
+	}
+
+	/**
+	 * Translate a live CLI-store change into an ephemeral protocol
+	 * notification. The change carries the session's current status (a vanished
+	 * process settles to `idle`), which flips the session's status so clients
+	 * show / hide a working indicator. A `sessionSummaryChanged` for a session a
+	 * client has not yet cached makes it re-list (see
+	 * `baseAgentHostSessionsProvider._handleSessionSummaryChanged`), which is how
+	 * a brand-new terminal session enters the list.
+	 */
+	private _handleCliSessionChange(e: IClaudeCliSessionChange): void {
+		// Protocol notification URIs are serialized strings (`<provider>:/<id>`),
+		// matching what `listSessions` / `sessionAdded` carry, so the client
+		// resolves the same session id.
+		const session = AgentSession.uri(this.id, e.sessionId).toString();
+		this._onDidEmitNotification.fire({ type: NotificationType.SessionSummaryChanged, channel: ROOT_STATE_URI, session, changes: { status: toProtocolStatus(e.status) } });
 	}
 
 	// #region Descriptor + auth
@@ -601,7 +656,7 @@ export class ClaudeAgent extends Disposable implements IAgent {
 			this._logService.warn('[Claude] SDK listSessions failed; surfacing empty list', err);
 			return [];
 		}
-		return Promise.all(sdkEntries.map(async entry => {
+		const list = await Promise.all(sdkEntries.map(async entry => {
 			try {
 				const sessionUri = AgentSession.uri(this.id, entry.sessionId);
 				const overlay = await this._metadataStore.read(sessionUri);
@@ -612,6 +667,18 @@ export class ClaudeAgent extends Disposable implements IAgent {
 			// External session, or DB read failed: surface what the SDK gave us.
 			return this._metadataStore.project(entry, {});
 		}));
+		// The transcript carries no live status, so stamp each session's real
+		// working / awaiting-input state from the CLI's per-process state files
+		// (see {@link ClaudeCliSessionWatcher}). Sessions with no running
+		// process keep the projected default. This is what surfaces the working
+		// indicator for a session reconciled into the list.
+		if (!this._cliWatcher) {
+			return list;
+		}
+		return list.map(meta => {
+			const live = this._cliWatcher!.statusFor(AgentSession.id(meta.session));
+			return live ? { ...meta, status: toProtocolStatus(live) } : meta;
+		});
 	}
 
 	/**

@@ -890,6 +890,16 @@ export interface IAgent {
 	readonly onDidMaterializeSession?: Event<IAgentMaterializeSessionEvent>;
 
 	/**
+	 * Optional stream of ephemeral protocol notifications the agent raises
+	 * directly (outside the state manager's per-session lifecycle). The
+	 * {@link IAgentService} forwards these verbatim to clients. Used by
+	 * terminal-only agents to surface live session lifecycle / status changes
+	 * for sessions an external process owns. Omit if the agent has no such
+	 * out-of-band notifications.
+	 */
+	readonly onDidEmitNotification?: Event<INotification>;
+
+	/**
 	 * Provides the agent host's server-tool host so the provider can advertise
 	 * and execute the agent host's server tools (feedback "comments" today, more
 	 * in the future) against a session's state. Optional: providers that do not

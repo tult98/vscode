@@ -5,14 +5,13 @@
 
 import './media/terminalChatView.css';
 import { $, clearNode, Dimension } from '../../../../base/browser/dom.js';
-import { autorun } from '../../../../base/common/observable.js';
 import { DisposableStore, MutableDisposable } from '../../../../base/common/lifecycle.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { localize } from '../../../../nls.js';
 import { ITerminalInstance } from '../../../../workbench/contrib/terminal/browser/terminal.js';
 import { AbstractChatView, ChatViewKind } from '../../../browser/parts/chatView.js';
-import { IChat, SessionStatus } from '../../../services/sessions/common/session.js';
+import { IChat } from '../../../services/sessions/common/session.js';
 import { IActiveSession } from '../../../services/sessions/common/sessionsManagement.js';
 import { getNativeTerminalLaunch, ISessionTerminalService } from '../../../services/chatView/browser/sessionTerminalService.js';
 
@@ -75,18 +74,13 @@ export class TerminalChatView extends AbstractChatView {
 		const store = new DisposableStore();
 		this._sessionDisposables.value = store;
 
-		// Defer creating the native terminal until the SDK turn (if any) finishes
-		// so the SDK subprocess and the native CLI never write the shared
-		// transcript at the same time. When the status leaves `InProgress` the
-		// autorun re-runs and attaches the terminal.
-		store.add(autorun(reader => {
-			const status = session.activeChat.read(reader).status.read(reader);
-			if (status === SessionStatus.InProgress) {
-				this._showMessage(localize('claudeTerminalWaiting', "Waiting for the current turn to finish before opening the Claude terminal…"));
-				return;
-			}
-			this._ensureTerminalAttached(session);
-		}));
+		// Attach the native terminal immediately. The session is terminal-only:
+		// the `claude` CLI hosted by this terminal is the sole writer of the
+		// session transcript, so there is no SDK subprocess to race with. The
+		// session status reaching `InProgress` now reflects that very CLI's
+		// activity (surfaced by the agent host's CLI session watcher), so
+		// deferring on it would hide the terminal that is doing the work.
+		this._ensureTerminalAttached(session);
 	}
 
 	private _ensureTerminalAttached(session: IActiveSession, fresh = false): void {

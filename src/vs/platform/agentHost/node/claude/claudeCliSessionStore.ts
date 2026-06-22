@@ -55,7 +55,7 @@ interface IClaudeTranscriptEntry {
 	readonly lastPrompt?: string;
 }
 
-function claudeConfigDir(): string {
+export function claudeConfigDir(): string {
 	const override = process.env['CLAUDE_CONFIG_DIR'];
 	return override && override.trim().length > 0 ? override : join(os.homedir(), '.claude');
 }

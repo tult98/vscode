@@ -341,6 +341,9 @@ export class AgentService extends Disposable implements IAgentService {
 		if (provider.onMcpNotification) {
 			this._providerSubscriptions.add(provider.onMcpNotification(e => this._onMcpNotification.fire(e)));
 		}
+		if (provider.onDidEmitNotification) {
+			this._providerSubscriptions.add(provider.onDidEmitNotification(e => this._onDidNotification.fire(e)));
+		}
 		this._registerSkillCompletionProvider();
 		if (!this._defaultProvider) {
 			this._defaultProvider = provider.id;
