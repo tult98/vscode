@@ -11,8 +11,6 @@ import { constObservable } from '../../../../../base/common/observable.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { mock } from '../../../../../base/test/common/mock.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
-import { TestConfigurationService } from '../../../../../platform/configuration/test/common/testConfigurationService.js';
 import { NullLogService } from '../../../../../platform/log/common/log.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { TestNotificationService } from '../../../../../platform/notification/test/common/testNotificationService.js';
@@ -112,7 +110,7 @@ suite('SessionTerminalService', () => {
 		instances: ITerminalInstance[];
 	}
 
-	function createHarness(executablePath?: string): ITestHarness {
+	function createHarness(): ITestHarness {
 		const createdConfigs: IShellLaunchConfig[] = [];
 		const disposedIds: number[] = [];
 		const onDidCreateInstance = disposables.add(new Emitter<ITerminalInstance>());
@@ -141,14 +139,9 @@ suite('SessionTerminalService', () => {
 			override readonly onDidReplaceSession = onDidReplaceSession.event as Event<never>;
 		};
 
-		const configurationService = new TestConfigurationService(
-			executablePath !== undefined ? { chat: { agentHost: { claudeAgent: { executablePath } } } } : {}
-		);
-
 		const service = disposables.add(new SessionTerminalService(
 			terminalService as unknown as ITerminalService,
 			sessionsManagementService as unknown as ISessionsManagementService,
-			configurationService as unknown as IConfigurationService,
 			new TestNotificationService() as unknown as INotificationService,
 			new NullLogService(),
 		));
@@ -173,7 +166,7 @@ suite('SessionTerminalService', () => {
 	});
 
 	test('getOrCreateTerminal builds the claude --resume launch config and reuses the instance', async () => {
-		const h = createHarness('/usr/bin/claude');
+		const h = createHarness();
 		const session = stubSession({ rawId: 'native-id-1', sessionId: 'session-1' });
 
 		const first = await h.service.getOrCreateTerminal(session);
@@ -192,7 +185,7 @@ suite('SessionTerminalService', () => {
 			ownerId: config.reconnectionProperties?.ownerId,
 			data: config.reconnectionProperties?.data,
 		}, {
-			executable: '/usr/bin/claude',
+			executable: 'claude',
 			args: ['--resume', 'native-id-1'],
 			cwd: URI.file('/work/repo').fsPath,
 			hideFromUser: true,

@@ -9,8 +9,6 @@ import { Schemas } from '../../../../base/common/network.js';
 import { IObservable, IReader, observableValue } from '../../../../base/common/observable.js';
 import { URI } from '../../../../base/common/uri.js';
 import { localize } from '../../../../nls.js';
-import { AgentHostClaudeExecutablePathSettingId } from '../../../../platform/agentHost/common/agentService.js';
-import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
@@ -149,7 +147,6 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
 	constructor(
 		@ITerminalService private readonly terminalService: ITerminalService,
 		@ISessionsManagementService private readonly sessionsManagementService: ISessionsManagementService,
-		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@ILogService private readonly logService: ILogService,
 	) {
@@ -209,7 +206,7 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
 		// When recovering from a failed resume, ignore the resume id and launch a
 		// brand-new `claude` instead.
 		const resumeSessionId = fresh ? undefined : launch.resumeSessionId;
-		const executable = this.configurationService.getValue<string>(AgentHostClaudeExecutablePathSettingId) || 'claude';
+		const executable = 'claude';
 		const initialPrompt = this._initialPrompts.get(session.sessionId);
 		const config: IShellLaunchConfig = {
 			executable,
@@ -292,7 +289,7 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
 		if (launchFailed || notFound) {
 			this.notificationService.notify({
 				severity: Severity.Warning,
-				message: localize('claudeCliLaunchFailed', "The Claude CLI could not be started. Make sure `claude` is installed and on your PATH, or set `chat.agentHost.claudeAgent.executablePath`."),
+				message: localize('claudeCliLaunchFailed', "The Claude CLI could not be started. Make sure `claude` is installed and on your PATH."),
 			});
 		}
 	}

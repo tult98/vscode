@@ -11,7 +11,7 @@ import { join } from '../../../../base/common/path.js';
 import { createDecorator } from '../../../instantiation/common/instantiation.js';
 import { ILogService } from '../../../log/common/log.js';
 import { IAgentSdkDownloader, IAgentSdkPackage } from '../agentSdkDownloader.js';
-import { AgentHostClaudeExecutablePathEnvVar, AgentHostClaudeSdkRootEnvVar, AgentHostClaudeUseCliEnvVar, isAgentEnabled } from '../../common/agentService.js';
+import { AgentHostClaudeSdkRootEnvVar, AgentHostClaudeUseCliEnvVar, isAgentEnabled } from '../../common/agentService.js';
 import { createClaudeCliWarmQuery } from './claudeCliQuery.js';
 import { cliGetSessionInfo, cliGetSessionMessages, cliGetSubagentMessages, cliListSessions, cliListSubagents } from './claudeCliSessionStore.js';
 
@@ -151,9 +151,8 @@ export class ClaudeAgentSdkService implements IClaudeAgentSdkService {
 		// GUI authenticates with no `CLAUDE_CODE_OAUTH_TOKEN`. Everything above
 		// the transport (pipeline, event mapper, protocol) is unchanged.
 		if (isAgentEnabled(process.env[AgentHostClaudeUseCliEnvVar], false)) {
-			const executablePath = process.env[AgentHostClaudeExecutablePathEnvVar] || 'claude';
-			this._logService.info(`[Claude CLI] startup via CLI transport (executable=${executablePath})`);
-			return createClaudeCliWarmQuery(params.options, executablePath, this._logService);
+			this._logService.info(`[Claude CLI] startup via CLI transport (executable=claude)`);
+			return createClaudeCliWarmQuery(params.options, 'claude', this._logService);
 		}
 		const sdk = await this._getSdk();
 		return sdk.startup(params);

@@ -10,7 +10,6 @@ import product from '../../product/common/product.js';
 import { Registry } from '../../registry/common/platform.js';
 import {
 	AgentHostClaudeAgentEnabledSettingId,
-	AgentHostClaudeExecutablePathSettingId,
 	AgentHostCodexAgentBinaryArgsSettingId,
 	AgentHostCodexAgentEnabledSettingId,
 	AgentHostCodexAgentSdkRootSettingId,
@@ -54,12 +53,6 @@ configurationRegistry.registerConfiguration({
 			policyReference: {
 				name: 'Claude3PIntegration',
 			},
-		},
-		[AgentHostClaudeExecutablePathSettingId]: {
-			type: 'string',
-			markdownDescription: nls.localize('chat.agentHost.claudeAgent.executablePath', "Path to the native `claude` CLI used by terminal mode in the Agents Window (the embedded terminal that runs `claude --resume` in place of the GUI chat) and by the CLI transport when `#chat.agents.claude.nativeCli#` is enabled. Defaults to `claude`, resolved on your `PATH`."),
-			default: 'claude',
-			tags: ['experimental', 'advanced'],
 		},
 		[AgentHostCodexAgentEnabledSettingId]: {
 			type: 'boolean',

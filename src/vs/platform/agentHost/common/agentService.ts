@@ -71,13 +71,6 @@ export const AgentHostCustomTerminalToolEnabledSettingId = 'chat.agentHost.custo
 export const AgentHostClaudeAgentEnabledSettingId = 'chat.agentHost.claudeAgent.enabled';
 
 /**
- * Setting id for the native `claude` CLI executable used by the Agents Window's
- * terminal mode (the embedded terminal that runs `claude --resume <id>` instead
- * of the GUI chat). Defaults to `'claude'` (resolved on PATH).
- */
-export const AgentHostClaudeExecutablePathSettingId = 'chat.agentHost.claudeAgent.executablePath';
-
-/**
  * Configuration key controlling whether the Codex provider is registered in
  * the agent host process. When `false` (the default), the agent host skips
  * registering the Codex provider regardless of SDK availability. The agent
@@ -149,13 +142,6 @@ export const AgentHostClaudeUseCliSettingId = 'chat.agentHost.claudeAgent.useCli
  * absent means "default" (`false`).
  */
 export const AgentHostClaudeUseCliEnvVar = 'VSCODE_AGENT_HOST_CLAUDE_USE_CLI';
-
-/**
- * Environment variable form of {@link AgentHostClaudeExecutablePathSettingId},
- * forwarded by the agent host starters so the CLI transport can resolve the
- * binary inside the agent host process.
- */
-export const AgentHostClaudeExecutablePathEnvVar = 'VSCODE_AGENT_HOST_CLAUDE_EXECUTABLE_PATH';
 
 /**
  * Resolves the effective enable state for a Claude/Codex provider from the
@@ -457,7 +443,6 @@ export interface IAgentSdkStarterSettings {
 	readonly claudeAgentEnabled?: boolean;
 	readonly claudeUseSubscription?: boolean;
 	readonly claudeUseCli?: boolean;
-	readonly claudeExecutablePath?: string;
 	readonly codexAgentEnabled?: boolean;
 }
 
@@ -486,7 +471,6 @@ export function buildAgentSdkEnv(
 	if (settings.claudeUseCli !== undefined) {
 		setIfMissing(AgentHostClaudeUseCliEnvVar, settings.claudeUseCli ? 'true' : 'false');
 	}
-	setIfMissing(AgentHostClaudeExecutablePathEnvVar, settings.claudeExecutablePath);
 	if (settings.codexAgentEnabled !== undefined) {
 		setIfMissing(AgentHostCodexAgentEnabledEnvVar, settings.codexAgentEnabled ? 'true' : 'false');
 	}

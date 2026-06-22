@@ -13,7 +13,7 @@ import { parseAgentHostDebugPort } from '../../environment/node/environmentServi
 import { ILogService } from '../../log/common/log.js';
 import { getResolvedShellEnv } from '../../shell/node/shellEnv.js';
 import { IAgentHostConnection, IAgentHostStarter } from '../common/agent.js';
-import { AgentHostClaudeAgentEnabledSettingId, AgentHostClaudeExecutablePathSettingId, AgentHostClaudeUseCliSettingId, AgentHostClaudeUseSubscriptionSettingId, AgentHostCodexAgentBinaryArgsSettingId, AgentHostCodexAgentEnabledSettingId, AgentHostCodexAgentSdkRootSettingId, AgentHostCodexAgentCodexHomeSettingId, AgentHostOTelCaptureContentSettingId, AgentHostOTelDbSpanExporterEnabledSettingId, AgentHostOTelEnabledSettingId, AgentHostOTelExporterTypeSettingId, AgentHostOTelOtlpEndpointSettingId, AgentHostOTelOutfileSettingId, ClaudeNativeCliSettingId, buildAgentHostOTelEnv, buildAgentSdkEnv } from '../common/agentService.js';
+import { AgentHostClaudeAgentEnabledSettingId, AgentHostClaudeUseCliSettingId, AgentHostClaudeUseSubscriptionSettingId, AgentHostCodexAgentBinaryArgsSettingId, AgentHostCodexAgentEnabledSettingId, AgentHostCodexAgentSdkRootSettingId, AgentHostCodexAgentCodexHomeSettingId, AgentHostOTelCaptureContentSettingId, AgentHostOTelDbSpanExporterEnabledSettingId, AgentHostOTelEnabledSettingId, AgentHostOTelExporterTypeSettingId, AgentHostOTelOtlpEndpointSettingId, AgentHostOTelOutfileSettingId, ClaudeNativeCliSettingId, buildAgentHostOTelEnv, buildAgentSdkEnv } from '../common/agentService.js';
 import '../common/agentHostStarter.config.contribution.js';
 
 /**
@@ -86,7 +86,6 @@ export class NodeAgentHostStarter extends Disposable implements IAgentHostStarte
 			// The Agents-Window native-CLI switch also implies CLI transport, so the
 			// GUI chat is driven by the native `claude` CLI instead of the SDK.
 			claudeUseCli: this._configurationService.getValue<boolean>(AgentHostClaudeUseCliSettingId) || this._configurationService.getValue<boolean>(ClaudeNativeCliSettingId),
-			claudeExecutablePath: this._configurationService.getValue<string>(AgentHostClaudeExecutablePathSettingId),
 			codexAgentEnabled: this._configurationService.getValue<boolean>(AgentHostCodexAgentEnabledSettingId),
 		}, process.env);
 		Object.assign(env, sdkEnv);
