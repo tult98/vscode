@@ -14,7 +14,7 @@ import { ILogService } from '../../../../platform/log/common/log.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { ITerminalLaunchError, IShellLaunchConfig, TerminalLocation } from '../../../../platform/terminal/common/terminal.js';
 import { AgentSessionProviders } from '../../../../workbench/contrib/chat/browser/agentSessions/agentSessions.js';
-import { ITerminalInstance, ITerminalService } from '../../../../workbench/contrib/terminal/browser/terminal.js';
+import { ITerminalInstance, ITerminalService, TerminalConnectionState } from '../../../../workbench/contrib/terminal/browser/terminal.js';
 import { ISession, SessionStatus } from '../../sessions/common/session.js';
 import { IActiveSession, ISessionsManagementService } from '../../sessions/common/sessionsManagement.js';
 
@@ -203,6 +203,21 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
 			return existing;
 		}
 
+		// After a window reload the session's persisted terminal is revived
+		// asynchronously (adopted by `_adoptRevivedTerminal` via
+		// `onDidCreateInstance` during reconnection). The view attaches
+		// immediately, so without waiting we could race ahead of that adoption and
+		// launch a *second* `claude --resume <id>` for a session that already has a
+		// live process. Wait for reconnection to settle, then re-check, so a revived
+		// terminal is reused instead of duplicated.
+		if (this.terminalService.connectionState !== TerminalConnectionState.Connected) {
+			await this.terminalService.whenConnected;
+			const revived = this.getTerminal(session.sessionId) ?? this._findReconnectedTerminal(session.sessionId);
+			if (revived) {
+				return revived;
+			}
+		}
+
 		// When recovering from a failed resume, ignore the resume id and launch a
 		// brand-new `claude` instead.
 		const resumeSessionId = fresh ? undefined : launch.resumeSessionId;
@@ -292,6 +307,26 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
 				message: localize('claudeCliLaunchFailed', "The Claude CLI could not be started. Make sure `claude` is installed and on your PATH."),
 			});
 		}
+	}
+
+	/**
+	 * Finds a reconnected (post-reload) terminal belonging to the given session
+	 * that has not been adopted yet and tracks it, returning the instance. Guards
+	 * {@link getOrCreateTerminal} against launching a duplicate `claude` when the
+	 * revived terminal's `onDidCreateInstance` adoption has not fired by the time
+	 * reconnection completes.
+	 */
+	private _findReconnectedTerminal(sessionId: string): ITerminalInstance | undefined {
+		const reconnected = this.terminalService.getReconnectedTerminals(SESSION_TERMINAL_OWNER);
+		const match = reconnected?.find(instance => {
+			const data = instance.reconnectionProperties?.data as ISessionTerminalReconnectionData | undefined;
+			return data?.sessionId === sessionId && !instance.isDisposed;
+		});
+		if (match) {
+			this._adoptRevivedTerminal(match);
+			return this.getTerminal(sessionId);
+		}
+		return undefined;
 	}
 
 	private _adoptRevivedTerminal(instance: ITerminalInstance): void {
