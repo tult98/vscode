@@ -45,7 +45,7 @@ import { AgentConfigurationService, IAgentConfigurationService } from '../../nod
 import { AgentHostStateManager } from '../../node/agentHostStateManager.js';
 import { IAgentPluginManager, ISyncedCustomization } from '../../common/agentPluginManager.js';
 import { ClaudeAgent } from '../../node/claude/claudeAgent.js';
-import { ClaudeAgentSession, ClaudeWorkspaceSkillCache } from '../../node/claude/claudeAgentSession.js';
+import { ClaudeAgentSession } from '../../node/claude/claudeAgentSession.js';
 import { ClaudeSessionMetadataStore } from '../../node/claude/claudeSessionMetadataStore.js';
 import { ClaudeAgentSdkService, IClaudeAgentSdkService, IClaudeSdkBindings } from '../../node/claude/claudeAgentSdkService.js';
 import { IAgentSdkDownloader } from '../../node/agentSdkDownloader.js';
@@ -902,59 +902,6 @@ suite('ClaudeAgent', () => {
 			}, 'turn-1'),
 			/session is not materialized/i,
 		);
-	});
-
-	test('getSessionCustomizations serves cached discovered skills to a provisional session in the same workspace only', async () => {
-		// A previously-materialized session in this workspace populates the
-		// shared write-through cache; a still-provisional session in the same
-		// working directory must surface those discovered skills (so the `/`
-		// picker is instant) — while a session in a different workspace must not.
-		const { instantiationService } = createTestContext(disposables);
-		const workingDirectory = URI.file('/work');
-
-		const discoveredUri = 'claude-discovered:/work/skills';
-		const discovered: PluginCustomization = {
-			type: CustomizationType.Plugin,
-			id: customizationId(discoveredUri),
-			uri: discoveredUri,
-			name: 'Discovered in Claude',
-			enabled: true,
-			load: { kind: CustomizationLoadStatus.Loaded },
-			children: [{
-				type: CustomizationType.Skill,
-				id: customizationId('claude-discovered:/work/skills/mr-create/SKILL.md'),
-				uri: 'claude-discovered:/work/skills/mr-create/SKILL.md',
-				name: 'mr-create',
-				description: 'Create an MR',
-			}],
-		};
-		const cache: ClaudeWorkspaceSkillCache = new Map([[workingDirectory.toString(), discovered]]);
-
-		const makeProvisional = (id: string, dir: URI) => disposables.add(ClaudeAgentSession.createProvisional(
-			id,
-			AgentSession.uri('claude', id),
-			dir,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			new PendingRequestRegistry<CallToolResult>(),
-			'default',
-			instantiationService.createInstance(ClaudeSessionMetadataStore, 'claude'),
-			instantiationService,
-			cache,
-		));
-
-		const sameWorkspace = await makeProvisional('sess-same', workingDirectory).getSessionCustomizations();
-		const otherWorkspace = await makeProvisional('sess-other', URI.file('/other')).getSessionCustomizations();
-
-		assert.deepStrictEqual({
-			sameWorkspaceServesCachedBundle: sameWorkspace.includes(discovered),
-			otherWorkspaceDoesNot: otherWorkspace.includes(discovered),
-		}, {
-			sameWorkspaceServesCachedBundle: true,
-			otherWorkspaceDoesNot: false,
-		});
 	});
 
 	test('resume keeps the existing overlay model (materialize does not clobber on isResume)', async () => {

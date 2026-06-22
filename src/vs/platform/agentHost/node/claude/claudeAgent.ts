@@ -33,7 +33,7 @@ import { projectFromCopilotContext } from '../copilot/copilotGitProject.js';
 import { IClaudeAgentSdkService } from './claudeAgentSdkService.js';
 import { mapSessionMessagesToTurns } from './claudeReplayMapper.js';
 import { getSubagentTranscript } from './claudeSubagentResolver.js';
-import { ClaudeAgentSession, ClaudeWorkspaceSkillCache } from './claudeAgentSession.js';
+import { ClaudeAgentSession } from './claudeAgentSession.js';
 import { handleCanUseTool } from './claudeCanUseTool.js';
 import type { IAgentServerToolHost } from '../../common/agentServerTools.js';
 import { resolvePromptToContentBlocks } from './claudePromptResolver.js';
@@ -116,15 +116,6 @@ export class ClaudeAgent extends Disposable implements IAgent {
 	 * is idempotent if the key has already been removed.
 	 */
 	private readonly _sessions = this._register(new DisposableMap<string, ClaudeSessionEntry>());
-
-	/**
-	 * Process-wide, write-through cache of the discovered-customizations
-	 * bundle keyed by working directory, shared across all sessions. The
-	 * first materialized session in a workspace populates it; later
-	 * provisional sessions read it so the `/` picker shows the agent's
-	 * skills before they have a live query. See {@link ClaudeWorkspaceSkillCache}.
-	 */
-	private readonly _workspaceSkillCache: ClaudeWorkspaceSkillCache = new Map();
 
 	/**
 	 * Phase 6: fired once per session when {@link _materializeProvisional}
@@ -340,7 +331,6 @@ export class ClaudeAgent extends Disposable implements IAgent {
 			permissionMode,
 			this._metadataStore,
 			this._instantiationService,
-			this._workspaceSkillCache,
 		);
 		const entry = new ClaudeSessionEntry(session);
 		entry.addDisposable(session.onDidSessionProgress(signal => this._onDidSessionProgress.fire(signal)));
@@ -455,7 +445,6 @@ export class ClaudeAgent extends Disposable implements IAgent {
 			permissionMode,
 			this._metadataStore,
 			this._instantiationService,
-			this._workspaceSkillCache,
 		);
 		const entry = new ClaudeSessionEntry(session);
 		entry.addDisposable(session.onDidSessionProgress(signal => this._onDidSessionProgress.fire(signal)));

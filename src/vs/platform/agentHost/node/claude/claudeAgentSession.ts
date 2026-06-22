@@ -86,17 +86,6 @@ function resolveCurrentPermissionMode(
  *   • Pending-permission and pending-user-input registries (Phase 7),
  *     surfaced via `requestPermission` / `requestUserInput`.
  */
-/**
- * Process-wide, in-memory cache of the discovered-customizations bundle
- * (the "Discovered in Claude" plugin container produced by
- * {@link ClaudeSdkCustomizationBundler}) keyed by working directory. Owned
- * by {@link ClaudeAgent} and shared across all of its sessions so the first
- * materialized session in a workspace populates it (write-through) and every
- * later — still provisional — session in the same workspace can surface the
- * agent's slash commands / skills instantly, before it materializes.
- */
-export type ClaudeWorkspaceSkillCache = Map<string /* workingDirectory.toString() */, Customization>;
-
 export class ClaudeAgentSession extends Disposable {
 
 	private _pipeline: ClaudeSdkPipeline | undefined;
@@ -138,7 +127,6 @@ export class ClaudeAgentSession extends Disposable {
 		permissionModeFallback: ClaudePermissionMode,
 		metadataStore: ClaudeSessionMetadataStore,
 		instantiationService: IInstantiationService,
-		skillCache?: ClaudeWorkspaceSkillCache,
 	): ClaudeAgentSession {
 		return instantiationService.createInstance(
 			ClaudeAgentSession,
@@ -154,7 +142,6 @@ export class ClaudeAgentSession extends Disposable {
 			new SessionClientToolsDiff(),
 			permissionModeFallback,
 			metadataStore,
-			skillCache,
 		);
 	}
 
@@ -272,7 +259,6 @@ export class ClaudeAgentSession extends Disposable {
 		toolDiff: SessionClientToolsDiff,
 		private readonly _permissionModeFallback: ClaudePermissionMode,
 		private readonly _metadataStore: ClaudeSessionMetadataStore,
-		private readonly _skillCache: ClaudeWorkspaceSkillCache | undefined,
 		@IInstantiationService private readonly _instantiationService: IInstantiationService,
 		@IAgentConfigurationService private readonly _configurationService: IAgentConfigurationService,
 		@IClaudeAgentSdkService private readonly _sdkService: IClaudeAgentSdkService,
@@ -874,7 +860,6 @@ export class ClaudeAgentSession extends Disposable {
 	 */
 	async getSessionCustomizations(): Promise<readonly Customization[]> {
 		const { synced, enablement } = this.clientCustomizationsDiff.model.state.get();
-		const cacheKey = this.workingDirectory?.toString();
 		let bundled: Customization | undefined;
 		if (this._pipeline && this._sdkBundler) {
 			let sdk: ISdkResolvedCustomizations | undefined;
@@ -890,24 +875,6 @@ export class ClaudeAgentSession extends Disposable {
 					this._logService.warn(`[Claude:${this.sessionId}] SDK bundle failed`, err);
 				}
 			}
-			// Write-through: refresh the shared per-workspace cache with the
-			// freshly-discovered bundle so other (still provisional) sessions
-			// in this working directory surface the same skills instantly. A
-			// successful snapshot with no discovered customizations clears any
-			// stale entry; a failed snapshot (bundled stays undefined while
-			// `sdk` is undefined) leaves the last-known-good entry in place.
-			if (cacheKey && this._skillCache) {
-				if (bundled) {
-					this._skillCache.set(cacheKey, bundled);
-				} else if (sdk) {
-					this._skillCache.delete(cacheKey);
-				}
-			}
-		} else if (cacheKey) {
-			// Pre-materialize: serve the last-known discovered bundle for this
-			// workspace (if any) so the `/` picker shows the agent's skills
-			// before this session has its own live query.
-			bundled = this._skillCache?.get(cacheKey);
 		}
 		return projectSessionCustomizations(synced, enablement, bundled);
 	}
