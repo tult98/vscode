@@ -3,160 +3,43 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import type { CCAModel } from '@vscode/copilot-api';
-import type { ModelInfo, Options, SDKSessionInfo, SDKUserMessage, WarmQuery } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, SDKSessionInfo, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { raceTimeout, SequencerByKey } from '../../../../base/common/async.js';
+import { SequencerByKey } from '../../../../base/common/async.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { CancellationError } from '../../../../base/common/errors.js';
 import { Emitter } from '../../../../base/common/event.js';
-import { Disposable, DisposableMap, IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
-import { IObservable, observableValue } from '../../../../base/common/observable.js';
+import { Disposable, DisposableMap, IDisposable } from '../../../../base/common/lifecycle.js';
+import { constObservable, IObservable } from '../../../../base/common/observable.js';
 import { URI } from '../../../../base/common/uri.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { localize } from '../../../../nls.js';
 import { IInstantiationService } from '../../../instantiation/common/instantiation.js';
 import { ILogService } from '../../../log/common/log.js';
-import { IProductService } from '../../../product/common/productService.js';
 import { IAgentPluginManager, ISyncedCustomization } from '../../common/agentPluginManager.js';
 import { createSchema, platformSessionSchema, schemaProperty } from '../../common/agentHostSchema.js';
 import { ClaudePermissionMode, ClaudeSessionConfigKey, narrowClaudePermissionMode } from '../../common/claudeSessionConfigKeys.js';
-import { createClaudeThinkingLevelSchema, isClaudeEffortLevel } from '../../common/claudeModelConfig.js';
 import { SessionConfigKey } from '../../common/sessionConfigKeys.js';
 import { AgentHostClaudeUseCliEnvVar, AgentProvider, AgentSession, AgentSignal, GITHUB_COPILOT_PROTECTED_RESOURCE, IAgent, IAgentCreateSessionConfig, IAgentCreateSessionResult, IAgentDescriptor, IAgentMaterializeSessionEvent, IAgentModelInfo, IAgentResolveSessionConfigParams, IAgentSessionConfigCompletionsParams, IAgentSessionMetadata, IAgentSessionProjectInfo, isAgentEnabled } from '../../common/agentService.js';
 import { ActionType } from '../../common/state/sessionActions.js';
 import type { ResolveSessionConfigResult, SessionConfigCompletionsResult } from '../../common/state/protocol/commands.js';
 import { AHP_AUTH_REQUIRED, ProtocolError } from '../../common/state/sessionProtocol.js';
-import { PolicyState, ProtectedResourceMetadata, type AgentSelection, type ModelSelection, type ToolDefinition } from '../../common/state/protocol/state.js';
+import { ProtectedResourceMetadata, type AgentSelection, type ModelSelection, type ToolDefinition } from '../../common/state/protocol/state.js';
 import { isSubagentSession, parseSubagentSessionUri, ChatInputResponseKind, type ClientPluginCustomization, type Customization, type MessageAttachment, type PendingMessage, type ChatInputAnswer, type ToolCallResult, type Turn } from '../../common/state/sessionState.js';
 import { IAgentConfigurationService } from '../agentConfigurationService.js';
 import { IAgentHostGitService } from '../agentHostGitService.js';
 import { PendingRequestRegistry } from '../../common/pendingRequestRegistry.js';
 import { projectFromCopilotContext } from '../copilot/copilotGitProject.js';
-import { ICopilotApiService } from '../shared/copilotApiService.js';
 import { IClaudeAgentSdkService } from './claudeAgentSdkService.js';
 import { mapSessionMessagesToTurns } from './claudeReplayMapper.js';
 import { getSubagentTranscript } from './claudeSubagentResolver.js';
 import { ClaudeAgentSession, ClaudeWorkspaceSkillCache } from './claudeAgentSession.js';
-import { buildOptions } from './claudeSdkOptions.js';
 import { handleCanUseTool } from './claudeCanUseTool.js';
 import type { IAgentServerToolHost } from '../../common/agentServerTools.js';
-import { tryParseClaudeModelId } from './claudeModelId.js';
 import { resolvePromptToContentBlocks } from './claudePromptResolver.js';
 import { IClaudeProxyHandle, IClaudeProxyService } from './claudeProxyService.js';
 import { readClaudePermissionMode } from './claudeSessionPermissionMode.js';
 import { ClaudeSessionMetadataStore, IClaudeSessionOverlay } from './claudeSessionMetadataStore.js';
-
-const USER_AGENT_PREFIX = 'vscode_claude_code';
-
-/**
- * Returns true if `m` is a Claude-family model that should be advertised
- * to clients picking a model for the Claude provider.
- *
- * Combines the same surface checks the extension uses (vendor, picker
- * eligibility, tool-call support, `/v1/messages` endpoint) with a parse
- * of the model id via {@link tryParseClaudeModelId}, which excludes
- * synthetic ids like `auto` that aren't real Claude endpoints.
- */
-function isClaudeModel(m: CCAModel): boolean {
-	return (
-		m.vendor === 'Anthropic' &&
-		!!m.supported_endpoints?.includes('/v1/messages') &&
-		!!m.model_picker_enabled &&
-		!!m.capabilities?.supports?.tool_calls &&
-		tryParseClaudeModelId(m.id) !== undefined
-	);
-}
-
-/**
- * Augments the published `@vscode/copilot-api` `CCAModelSupports` with the
- * per-model `adaptive_thinking` / `reasoning_effort` fields the runtime
- * CAPI `/models` payload already carries but the SDK type doesn't yet
- * declare. Tracked at microsoft/vscode-capi#85; remove this when the SDK
- * catches up. Mirror of the same pattern at
- * `extensions/copilot/src/platform/endpoint/common/endpointProvider.ts`
- * (its locally-declared `IChatModelCapabilities`).
- */
-interface IClaudeModelSupports {
-	readonly adaptive_thinking?: boolean;
-	readonly reasoning_effort?: readonly string[];
-}
-
-/**
- * Project a {@link CCAModel} into the agent host's
- * {@link IAgentModelInfo} surface. The returned `provider` is the
- * agent's id (`'claude'`) — clients filter the root state's model list
- * by provider, so this must match {@link ClaudeAgent.id}, NOT the
- * upstream `vendor: 'Anthropic'` field.
- */
-function toAgentModelInfo(m: CCAModel, provider: AgentProvider): IAgentModelInfo {
-	const supports = m.capabilities?.supports;
-	const supportedEfforts = ((supports as IClaudeModelSupports | undefined)?.reasoning_effort ?? []).filter(isClaudeEffortLevel);
-	const configSchema = createClaudeThinkingLevelSchema(supportedEfforts);
-	const policyState = m.policy?.state as PolicyState | undefined;
-	const multiplier = m.billing?.multiplier;
-	return {
-		provider,
-		// CAPI/endpoint format, dotted version (e.g. `claude-haiku-4.5`) — the
-		// canonical id through `ModelSelection.id`. Convert to SDK format at SDK
-		// seams via `toSdkModelId`.
-		id: m.id,
-		name: m.name,
-		maxContextWindow: m.capabilities?.limits?.max_context_window_tokens,
-		supportsVision: !!supports?.vision,
-		...(configSchema ? { configSchema } : {}),
-		...(policyState ? { policyState } : {}),
-		...(typeof multiplier === 'number' ? { _meta: { multiplierNumeric: multiplier } } : {}),
-	};
-}
-
-/**
- * Project a Claude Agent SDK {@link ModelInfo} — returned by the running
- * instance's `initialize` handshake via {@link ClaudeAgentSession.getAvailableModels}
- * — into the agent host's {@link IAgentModelInfo} surface. Used in subscription /
- * CLI mode, where there is no CAPI `/models` enumeration: the live SDK / CLI is
- * the source of truth. The SDK speaks hyphenated ids (`claude-opus-4-5`); convert
- * to the canonical dotted endpoint id via {@link tryParseClaudeModelId} so the id
- * matches the rest of the model plumbing (the `toSdkModelId` seam converts back
- * at spawn time). `ModelInfo` carries no context-window / vision fields, so we
- * default `supportsVision` to true (consistent with {@link buildSubscriptionClaudeModels}).
- */
-function toAgentModelInfoFromSdk(m: ModelInfo, provider: AgentProvider): IAgentModelInfo {
-	const supportedEfforts = (m.supportedEffortLevels ?? []).filter(isClaudeEffortLevel);
-	const configSchema = createClaudeThinkingLevelSchema(supportedEfforts);
-	return {
-		provider,
-		id: tryParseClaudeModelId(m.value)?.toEndpointModelId() ?? m.value,
-		name: m.displayName,
-		supportsVision: true,
-		...(configSchema ? { configSchema } : {}),
-	};
-}
-
-/**
- * Static Claude model catalogue advertised when the agent runs in
- * **subscription mode** (CLI transport, `chat.agents.claude.nativeCli`).
- * In that mode there is no GitHub token and no Copilot proxy, so we cannot
- * enumerate models from CAPI; we publish a curated list instead. Ids are in
- * the canonical dotted endpoint format (`ModelSelection.id`); the
- * `toSdkModelId` seam in `buildOptions` converts them to the SDK/CLI's
- * hyphenated form at spawn time. Keep this in sync with Anthropic's current
- * subscription-eligible model lineup.
- */
-function buildSubscriptionClaudeModels(provider: AgentProvider): IAgentModelInfo[] {
-	const mk = (id: string, name: string, maxContextWindow: number): IAgentModelInfo => ({
-		provider,
-		id,
-		name,
-		maxContextWindow,
-		supportsVision: true,
-	});
-	return [
-		mk('claude-sonnet-4.5', 'Claude Sonnet 4.5', 200_000),
-		mk('claude-opus-4.1', 'Claude Opus 4.1', 200_000),
-		mk('claude-haiku-4.5', 'Claude Haiku 4.5', 200_000),
-	];
-}
 
 // Single source of truth for narrowing an arbitrary runtime value to
 // the closed `ClaudePermissionMode` union now lives in
@@ -201,18 +84,11 @@ export class ClaudeAgent extends Disposable implements IAgent {
 	private readonly _onDidCustomizationsChange = this._register(new Emitter<void>());
 	readonly onDidCustomizationsChange = this._onDidCustomizationsChange.event;
 
-	private readonly _models = observableValue<readonly IAgentModelInfo[]>(this, []);
-	readonly models: IObservable<readonly IAgentModelInfo[]> = this._models;
-
-	/**
-	 * Flips true once the running Claude instance's real model list has been
-	 * published (subscription / CLI mode only). Set only on a SUCCESSFUL
-	 * discovery — never speculatively — so the startup probe and the
-	 * per-session path can both attempt discovery without a failed attempt
-	 * blocking a later one. The model list is provider-global, so once true we
-	 * stop discovering for the rest of the agent-host lifetime.
-	 */
-	private _modelsDiscovered = false;
+	// Claude sessions run terminal-only — the embedded `claude` CLI manages its
+	// own model selection (`/model`) and the terminal launch never passes
+	// `--model`, so the agent host publishes no model catalogue. The `IAgent`
+	// contract still requires `models`, so report an empty, constant list.
+	readonly models: IObservable<readonly IAgentModelInfo[]> = constObservable([]);
 
 	private _githubToken: string | undefined;
 	private _proxyHandle: IClaudeProxyHandle | undefined;
@@ -308,14 +184,12 @@ export class ClaudeAgent extends Disposable implements IAgent {
 
 	constructor(
 		@ILogService private readonly _logService: ILogService,
-		@ICopilotApiService private readonly _copilotApiService: ICopilotApiService,
 		@IClaudeProxyService private readonly _claudeProxyService: IClaudeProxyService,
 		@IClaudeAgentSdkService private readonly _sdkService: IClaudeAgentSdkService,
 		@IAgentHostGitService private readonly _gitService: IAgentHostGitService,
 		@IAgentConfigurationService private readonly _configurationService: IAgentConfigurationService,
 		@IInstantiationService private readonly _instantiationService: IInstantiationService,
 		@IAgentPluginManager private readonly _pluginManager: IAgentPluginManager,
-		@IProductService private readonly _productService: IProductService,
 	) {
 		super();
 		// CLI transport implies subscription-style auth: the spawned `claude`
@@ -327,9 +201,10 @@ export class ClaudeAgent extends Disposable implements IAgent {
 		this._useSubscription = isAgentEnabled(process.env[AgentHostClaudeUseCliEnvVar], false);
 		this._metadataStore = _instantiationService.createInstance(ClaudeSessionMetadataStore, this.id);
 		if (this._useSubscription) {
-			// Subscription mode: no CAPI, so publish the static model catalogue
-			// up front. Auth (`authenticate`) and credit reports (proxy) never
-			// fire in this mode, so there is nothing else to wire.
+			// Subscription mode: the native `claude` CLI authenticates directly
+			// with the user's Claude Pro/Max credentials. Auth (`authenticate`)
+			// and credit reports (proxy) never fire in this mode, so there is
+			// nothing to wire.
 			this._logService.info('[Claude] Subscription mode enabled — using Claude Pro/Max credentials, bypassing Copilot proxy');
 			// Diagnostic: surface whether direct-auth credentials are actually
 			// visible to the agent host process (presence only, never the value).
@@ -338,12 +213,6 @@ export class ClaudeAgent extends Disposable implements IAgent {
 			const oauthTok = process.env.CLAUDE_CODE_OAUTH_TOKEN;
 			const apiKey = process.env.ANTHROPIC_API_KEY;
 			this._logService.info(`[Claude] Direct-auth credentials visible to agent host: CLAUDE_CODE_OAUTH_TOKEN(len=${oauthTok?.length ?? 0}, prefix=${oauthTok?.slice(0, 13) ?? '-'}), ANTHROPIC_API_KEY(len=${apiKey?.length ?? 0})`);
-			this._models.set(buildSubscriptionClaudeModels(this.id), undefined);
-			// Eagerly probe the running instance for its real model list so the
-			// picker shows it on the very first "New session" screen, before any
-			// message is sent. Best-effort and fire-and-forget — the seed above
-			// stays visible until (and if) the probe succeeds.
-			void this._runDiscovery(() => this._probeSupportedModels());
 			return;
 		}
 		// CAPI reports each request's billed credits via the proxy (the SDK
@@ -425,49 +294,7 @@ export class ClaudeAgent extends Disposable implements IAgent {
 		this._githubToken = token;
 		this._logService.info('[Claude] Auth token updated');
 		oldHandle?.dispose();
-		void this._refreshModels();
 		return true;
-	}
-
-	private async _refreshModels(): Promise<void> {
-		if (this._useSubscription) {
-			// Static catalogue is published once at construction; CAPI is
-			// unavailable without a GitHub token, so never overwrite it.
-			return;
-		}
-		const tokenAtStart = this._githubToken;
-		if (!tokenAtStart) {
-			this._models.set([], undefined);
-			return;
-		}
-		try {
-			const userAgent = `${USER_AGENT_PREFIX}/${this._productService.version}`;
-			const all = await this._copilotApiService.models(tokenAtStart, { headers: { 'User-Agent': userAgent } });
-			// Stale-write guard: if `authenticate()` rotated the token
-			// while we were awaiting the model list, a newer refresh has
-			// already published the right value — don't overwrite it.
-			if (this._githubToken !== tokenAtStart) {
-				return;
-			}
-			// Stable sort surfaces the CAPI-flagged chat-default model
-			// first. The picker treats `models[0]` as the de facto
-			// default (modelPicker.ts:144 — `_selectedModel ?? models[0]`)
-			// since `IAgentModelInfo` carries no explicit `isDefault`
-			// bit. Stable comparator returns 0 for equal-priority models
-			// so CAPI's ordering wins on ties.
-			const filtered = all
-				.filter(isClaudeModel)
-				.sort((a, b) => Number(b.is_chat_default) - Number(a.is_chat_default))
-				.map(m => toAgentModelInfo(m, this.id));
-
-			this._logService.info(`[Claude] Models refreshed. Count: ${filtered.length}`);
-			this._models.set(filtered, undefined);
-		} catch (err) {
-			this._logService.error(err, '[Claude] Failed to refresh models');
-			if (this._githubToken === tokenAtStart) {
-				this._models.set([], undefined);
-			}
-		}
 	}
 
 	// #endregion
@@ -572,125 +399,7 @@ export class ClaudeAgent extends Disposable implements IAgent {
 			project: session.project,
 		});
 
-		void this._maybeDiscoverModels(session);
-
 		return session;
-	}
-
-	/**
-	 * Kick off model discovery from a freshly-materialized session's live SDK /
-	 * CLI Query (whose `initialize` handshake is now answerable). Only relevant
-	 * in subscription / CLI mode — Copilot-proxy mode already enumerates models
-	 * from CAPI in {@link _refreshModels}. Fire-and-forget; a no-op once a prior
-	 * discovery (e.g. the startup probe) has already succeeded.
-	 */
-	private _maybeDiscoverModels(session: ClaudeAgentSession): void {
-		if (!this._useSubscription) {
-			return;
-		}
-		void this._runDiscovery(() => Promise.resolve(session.getAvailableModels()));
-	}
-
-	/**
-	 * Run one model-discovery attempt and, on success, publish the result.
-	 * Shared by the startup probe and the per-session path. Both may race; that
-	 * is intentional — {@link _modelsDiscovered} is set only on success, so a
-	 * failed attempt never blocks a later one, and a redundant concurrent
-	 * success simply re-publishes the same list. Best-effort: on failure or an
-	 * empty list the current catalogue (seed, or a previously-published list)
-	 * is left untouched so the picker is never blanked.
-	 */
-	private async _runDiscovery(getModels: () => Promise<readonly ModelInfo[]>): Promise<void> {
-		if (this._modelsDiscovered) {
-			return;
-		}
-		try {
-			const sdkModels = await getModels();
-			if (this._modelsDiscovered) {
-				return;
-			}
-			if (sdkModels.length === 0) {
-				this._logService.warn('[Claude] Model discovery returned no models; keeping current catalogue');
-				return;
-			}
-			this._modelsDiscovered = true;
-			this._models.set(sdkModels.map(m => toAgentModelInfoFromSdk(m, this.id)), undefined);
-			// Log the raw list (value → displayName) so the exact catalogue the
-			// running instance reports is visible — the CLI advertises its own
-			// alias-based selector ("default"/"sonnet"/"opus"/...), which differs
-			// from the versioned CAPI catalogue.
-			const summary = sdkModels.map(m => `${m.value}→"${m.displayName}"`).join(', ');
-			this._logService.info(`[Claude] Published ${sdkModels.length} model(s) discovered from the running instance: ${summary}`);
-		} catch (err) {
-			this._logService.warn('[Claude] Model discovery failed; keeping current catalogue', err);
-		}
-	}
-
-	/**
-	 * Spawn a short-lived SDK / CLI Query purely to read the running instance's
-	 * model list via {@link Query.supportedModels}, then tear it down. Sends no
-	 * user prompt — only the `initialize` handshake runs, so there is no model
-	 * turn and no token cost. The CLI transport resolves `supportedModels` only
-	 * while its message stream is being drained, so we drain in the background;
-	 * the in-process SDK does not need this but draining is harmless there too.
-	 * A timeout guards against a transport that never answers.
-	 */
-	private async _probeSupportedModels(): Promise<readonly ModelInfo[]> {
-		const abortController = new AbortController();
-		// Abort (killing any spawned subprocess) if the agent is disposed mid-probe.
-		this._register(toDisposable(() => abortController.abort()));
-		let warm: WarmQuery | undefined;
-		try {
-			const options = await buildOptions(
-				{
-					sessionId: generateUuid(),
-					// Account-level model list does not depend on the workspace; a
-					// best-effort cwd is sufficient to spawn the transport. The
-					// per-session path re-discovers with the real cwd if needed.
-					workingDirectory: URI.file(process.cwd()),
-					model: undefined,
-					abortController,
-					permissionMode: 'default',
-					// Never invoked — the probe sends no prompt, so no tool runs.
-					canUseTool: async () => ({ behavior: 'deny', message: 'claude model discovery probe' }),
-					isResume: false,
-					mcpServers: undefined,
-				},
-				// No proxy handle: subscription / CLI mode authenticates directly.
-				undefined,
-				() => { },
-				() => { },
-			);
-			warm = await this._sdkService.startup({ options });
-			if (abortController.signal.aborted) {
-				return [];
-			}
-			const query = warm.query(this._probeKeepAlivePrompt(abortController.signal));
-			const drain = (async () => {
-				try {
-					for await (const _ of query) { /* discard — only the handshake matters */ }
-				} catch { /* torn down */ }
-			})();
-			const models = await raceTimeout(Promise.resolve(query.supportedModels()), 20_000) ?? [];
-			abortController.abort();
-			await drain.catch(() => { });
-			return models;
-		} finally {
-			abortController.abort();
-			warm?.close();
-		}
-	}
-
-	/**
-	 * Prompt iterable for {@link _probeSupportedModels}: yields nothing (so the
-	 * transport never starts a turn) and stays open — keeping the CLI's stdin
-	 * alive — until the probe's abort fires.
-	 */
-	private async *_probeKeepAlivePrompt(signal: AbortSignal): AsyncGenerator<SDKUserMessage, void> {
-		if (signal.aborted) {
-			return;
-		}
-		await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
 	}
 
 	/**
@@ -771,8 +480,6 @@ export class ClaudeAgent extends Disposable implements IAgent {
 			workingDirectory,
 			project,
 		});
-
-		void this._maybeDiscoverModels(session);
 
 		return session;
 	}
@@ -1311,7 +1018,6 @@ export class ClaudeAgent extends Disposable implements IAgent {
 		this._proxyHandle?.dispose();
 		this._proxyHandle = undefined;
 		this._githubToken = undefined;
-		this._models.set([], undefined);
 	}
 }
 

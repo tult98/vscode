@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import type { McpSdkServerConfigWithInstance, ModelInfo, Options, PermissionMode, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { McpSdkServerConfigWithInstance, Options, PermissionMode, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { CancellationError } from '../../../../base/common/errors.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
@@ -910,19 +910,6 @@ export class ClaudeAgentSession extends Disposable {
 			bundled = this._skillCache?.get(cacheKey);
 		}
 		return projectSessionCustomizations(synced, enablement, bundled);
-	}
-
-	/**
-	 * The models the running Claude instance reports as available for this
-	 * session, via the SDK / CLI `initialize` handshake. Pre-materialize
-	 * sessions have no Query yet, so this returns an empty list; the agent
-	 * keeps its seed catalogue until a session materializes.
-	 */
-	async getAvailableModels(): Promise<readonly ModelInfo[]> {
-		if (!this._pipeline) {
-			return [];
-		}
-		return this._pipeline.discoverModels();
 	}
 
 	// #endregion

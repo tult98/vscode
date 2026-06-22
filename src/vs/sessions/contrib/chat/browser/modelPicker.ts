@@ -17,6 +17,7 @@ import { IModelPickerDelegate, ModelPickerActionItem } from '../../../../workben
 import { ILanguageModelChatMetadataAndIdentifier, ILanguageModelsService } from '../../../../workbench/contrib/chat/common/languageModels.js';
 import { Menus } from '../../../browser/menus.js';
 import { IsPhoneLayoutContext, ActiveSessionUsesCombinedConfigPickerContext } from '../../../common/contextkeys.js';
+import { getNativeTerminalLaunch } from '../../../services/chatView/browser/sessionTerminalService.js';
 import { ISessionsProvidersService } from '../../../services/sessions/browser/sessionsProvidersService.js';
 import { ISessionModelPickerOptions } from '../../../services/sessions/common/sessionsProvider.js';
 import { ISession, SessionStatus } from '../../../services/sessions/common/session.js';
@@ -59,6 +60,13 @@ function getModelPickerOptionsForSession(session: ISession | undefined, sessions
  */
 export function sessionHasNoSelectableModel(session: ISession | undefined, sessionsProvidersService: ISessionsProvidersService): boolean {
 	if (!session) {
+		return false;
+	}
+	// Terminal-bound (local Claude) sessions run the native `claude` CLI, which
+	// picks its own model — the agent host publishes no models and the launch
+	// passes no `--model`. So the absence of a selectable model must never block
+	// sending; the request is handed off to the terminal regardless.
+	if (getNativeTerminalLaunch(session)) {
 		return false;
 	}
 	if (getModelsForSession(session, sessionsProvidersService).length > 0) {
@@ -159,6 +167,10 @@ export class ModelPicker extends Disposable {
 			// session, or when an untitled session becomes established after send.
 			session?.modelId.read(reader);
 			session?.status.read(reader);
+			// Terminal-bound (local Claude) sessions hide the picker entirely
+			// (see `_shouldShowPicker`); that eligibility depends on the
+			// workspace resolving, so re-run when it does.
+			session?.workspace.read(reader);
 
 			// Keep the model list fresh while this session is active.
 			const provider = session ? this._sessionsProvidersService.getProvider(session.providerId) : undefined;
@@ -268,6 +280,12 @@ export class ModelPicker extends Disposable {
 	 * matching the historical behavior for providers that offer no models.
 	 */
 	private _shouldShowPicker(session: ISession | undefined): boolean {
+		// Terminal-bound (local Claude) sessions have no model picker: the native
+		// `claude` CLI owns model selection, so hide the chip rather than render a
+		// "No models available" empty state.
+		if (session && getNativeTerminalLaunch(session)) {
+			return false;
+		}
 		if (getModelsForSession(session, this._sessionsProvidersService).length > 0) {
 			return true;
 		}

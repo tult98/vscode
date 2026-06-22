@@ -15,7 +15,6 @@ import { IContextKey, IContextKeyService } from '../../../platform/contextkey/co
 import { asCssVariable } from '../../../platform/theme/common/colorUtils.js';
 import { IActiveSession } from '../../services/sessions/common/sessionsManagement.js';
 import { IChatViewFactory } from '../../services/chatView/browser/chatViewFactory.js';
-import { ISessionTerminalModeService } from '../../services/chatView/browser/sessionTerminalMode.js';
 import { getNativeTerminalLaunch, ISessionTerminalService } from '../../services/chatView/browser/sessionTerminalService.js';
 import { AbstractChatView, ChatViewKind, IChatViewOptions } from './chatView.js';
 import { ChatCompositeBar } from './chatCompositeBar.js';
@@ -90,7 +89,6 @@ export class SessionView extends Disposable implements ISerializableView {
 
 	constructor(
 		@IChatViewFactory private readonly chatViewFactory: IChatViewFactory,
-		@ISessionTerminalModeService private readonly terminalModeService: ISessionTerminalModeService,
 		@ISessionTerminalService private readonly sessionTerminalService: ISessionTerminalService,
 		@IInstantiationService instantiationService: IInstantiationService,
 		@IContextKeyService contextKeyService: IContextKeyService,
@@ -164,12 +162,13 @@ export class SessionView extends Disposable implements ISerializableView {
 		this._openSessionDisposables.add(this._handleContextKeys(session));
 
 		this._openSessionDisposables.add(autorun(reader => {
-			const terminalMode = this.terminalModeService.terminalMode.read(reader);
-			const launch = (terminalMode && session !== undefined) ? getNativeTerminalLaunch(session, reader) : undefined;
-			// Terminal mode shows the terminal for eligible local Claude sessions —
-			// created sessions resume immediately, but a brand-new session stays on
-			// the composer until the user submits a message (which marks it in
-			// `terminalSessionIds`), so "New" still opens the composer.
+			const launch = session !== undefined ? getNativeTerminalLaunch(session, reader) : undefined;
+			// Claude runs terminal-only: every eligible local Claude session shows
+			// the embedded `claude` terminal. Created sessions resume immediately,
+			// but a brand-new session stays on the composer until the user submits a
+			// message (which marks it in `terminalSessionIds`), so "New" still opens
+			// the composer. Non-Claude providers never resolve a launch and fall
+			// through to the GUI chat views below.
 			const showTerminal = !!launch && (
 				launch.resumeSessionId !== undefined ||
 				this.sessionTerminalService.terminalSessionIds.read(reader).has(session!.sessionId)
