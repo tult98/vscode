@@ -5,7 +5,8 @@
 
 import './media/terminalChatView.css';
 import { $, clearNode, Dimension } from '../../../../base/browser/dom.js';
-import { DisposableStore, MutableDisposable } from '../../../../base/common/lifecycle.js';
+import { disposableTimeout } from '../../../../base/common/async.js';
+import { DisposableStore, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { localize } from '../../../../nls.js';
@@ -14,6 +15,23 @@ import { AbstractChatView, ChatViewKind } from '../../../browser/parts/chatView.
 import { IChat } from '../../../services/sessions/common/session.js';
 import { IActiveSession } from '../../../services/sessions/common/sessionsManagement.js';
 import { getNativeTerminalLaunch, ISessionTerminalService } from '../../../services/chatView/browser/sessionTerminalService.js';
+
+/**
+ * How long `claude`'s terminal output must stay quiet before we consider its
+ * input box ready for the initial prompt. The CLI streams its boot UI (welcome
+ * box, MCP/plugin loading, …) right after launch; typing the prompt before that
+ * settles drops it into a not-yet-interactive input and the submit is swallowed.
+ * Waiting for output to fall quiet adapts to slow boots far better than a fixed
+ * delay. See {@link TerminalChatView._sendInitialPrompt}.
+ */
+const INITIAL_PROMPT_IDLE_PERIOD = 800;
+
+/**
+ * Upper bound on how long to wait for {@link INITIAL_PROMPT_IDLE_PERIOD} of quiet
+ * before sending the prompt anyway, so a CLI that never goes fully quiet still
+ * receives it.
+ */
+const INITIAL_PROMPT_MAX_WAIT = 10_000;
 
 /**
  * A session view that hosts an embedded terminal running the native `claude`
@@ -138,6 +156,7 @@ export class TerminalChatView extends AbstractChatView {
 				xterm.raw.options.smoothScrollDuration = 125;
 			}
 		});
+
 		// Re-apply after config changes: _updateSmoothScrolling() in XtermTerminal
 		// resets smoothScrollDuration whenever terminal.integrated.smoothScrolling is toggled.
 		store?.add(this.configurationService.onDidChangeConfiguration(e => {
@@ -145,6 +164,19 @@ export class TerminalChatView extends AbstractChatView {
 				instance.xterm.raw.options.smoothScrollDuration = 125;
 			}
 		}));
+
+		// Deliver the prompt captured by the composer for a brand-new session by
+		// typing it into the `claude` TUI (mirroring a normal message), rather
+		// than passing it as a launch arg: the embedded terminal spawns `claude`
+		// before its real dimensions are delivered, and an argv prompt does not
+		// flush its turn until a later resize/input event. We send only after the
+		// terminal is attached, laid out and has produced output (its input box is
+		// up). Consuming clears the prompt so it is sent exactly once and never
+		// replayed on a terminal revived after a reload.
+		const initialPrompt = this.sessionTerminalService.consumeInitialPrompt(sessionId);
+		if (initialPrompt) {
+			this._sendInitialPrompt(instance, sessionId, initialPrompt, store);
+		}
 
 		// If the pty exits (e.g. the user runs /exit or `claude` was not found),
 		// drop it and surface a message in place.
@@ -172,6 +204,54 @@ export class TerminalChatView extends AbstractChatView {
 			}
 			this._showMessage(localize('claudeTerminalExited', "The Claude terminal exited. Reload the window to restart it."));
 		}));
+	}
+
+	/**
+	 * Waits until the freshly launched `claude` CLI is ready to receive input —
+	 * its process is up and it has emitted its first output (welcome box / input
+	 * prompt) — then types {@link prompt} and submits it. A fallback timeout
+	 * guards against a CLI that produces no early output. Stale-guards against a
+	 * session switch while awaiting.
+	 */
+	private async _sendInitialPrompt(instance: ITerminalInstance, sessionId: string, prompt: string, store: DisposableStore | undefined): Promise<void> {
+		try {
+			await instance.processReady;
+			// Wait for `claude` to finish booting (its output falls quiet) before
+			// typing — sending during boot drops the prompt into a not-yet-ready
+			// input and the submit is swallowed.
+			await this._whenTerminalIdle(instance, store);
+			if (this._currentInstance !== instance || this._currentSessionId !== sessionId || instance.isDisposed) {
+				return; // switched session or terminal gone while awaiting
+			}
+			// Type the prompt and submit it (the trailing Enter), exactly as the
+			// user would once the input box is interactive.
+			await instance.sendText(prompt, /*shouldExecute*/ true);
+		} catch (err) {
+			this.logService.error('[TerminalChatView] Failed to send initial prompt', err);
+		}
+	}
+
+	/**
+	 * Resolves once {@link instance}'s pty output has stayed quiet for
+	 * {@link INITIAL_PROMPT_IDLE_PERIOD}ms (its boot UI finished rendering), or
+	 * after {@link INITIAL_PROMPT_MAX_WAIT}ms as a hard cap.
+	 */
+	private _whenTerminalIdle(instance: ITerminalInstance, store: DisposableStore | undefined): Promise<void> {
+		return new Promise<void>(resolve => {
+			const disposables = new DisposableStore();
+			store?.add(disposables);
+			// Resolve on disposal too, so a session switch (which disposes the store)
+			// unblocks the awaiter — the caller's stale-guard then skips sending.
+			disposables.add(toDisposable(() => resolve()));
+			const done = () => disposables.dispose();
+			// Reset the quiet timer on every chunk of output; resolve once a full
+			// idle period elapses with no further output.
+			const quietTimer = disposables.add(new MutableDisposable());
+			const armQuietTimer = () => { quietTimer.value = disposableTimeout(done, INITIAL_PROMPT_IDLE_PERIOD); };
+			disposables.add(instance.onData(armQuietTimer));
+			disposables.add(disposableTimeout(done, INITIAL_PROMPT_MAX_WAIT));
+			armQuietTimer();
+		});
 	}
 
 	private _detachCurrent(): void {

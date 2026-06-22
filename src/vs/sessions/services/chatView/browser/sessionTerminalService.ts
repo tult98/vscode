@@ -112,12 +112,22 @@ export interface ISessionTerminalService {
 	getOrCreateTerminal(session: IActiveSession, fresh?: boolean): Promise<ITerminalInstance | undefined>;
 
 	/**
-	 * Switches a brand-new (untitled) session to the terminal, seeding `claude`
-	 * with the message the user submitted in the composer. Marks the session in
+	 * Switches a brand-new (untitled) session to the terminal, capturing the
+	 * message the user submitted in the composer. Marks the session in
 	 * {@link terminalSessionIds} so {@link SessionView} flips it to the terminal,
-	 * then lazily launches `claude "<initialPrompt>"`.
+	 * then lazily launches a fresh `claude`; the captured prompt is delivered by
+	 * {@link consumeInitialPrompt} once the terminal is ready.
 	 */
 	openNewSessionTerminal(session: IActiveSession, initialPrompt: string): void;
+
+	/**
+	 * Returns and clears the captured initial prompt for a brand-new session, if
+	 * any. The view types it into the ready `claude` TUI (rather than passing it
+	 * as a launch arg, which races the embedded terminal's deferred sizing).
+	 * Consuming clears it so it is sent exactly once and never replayed on a
+	 * terminal revived after a window reload.
+	 */
+	consumeInitialPrompt(sessionId: string): string | undefined;
 
 	/** The terminal already created for a session, if any. */
 	getTerminal(sessionId: string): ITerminalInstance | undefined;
@@ -222,15 +232,15 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
 		// brand-new `claude` instead.
 		const resumeSessionId = fresh ? undefined : launch.resumeSessionId;
 		const executable = 'claude';
-		const initialPrompt = this._initialPrompts.get(session.sessionId);
 		const config: IShellLaunchConfig = {
 			executable,
-			// Resume the SDK-started conversation for created sessions; for a
-			// brand-new session launch a fresh `claude`, seeded with the prompt the
-			// user submitted in the composer when present.
-			args: resumeSessionId
-				? ['--resume', resumeSessionId]
-				: (initialPrompt ? [initialPrompt] : []),
+			// Resume the SDK-started conversation for created sessions; a brand-new
+			// session launches a fresh `claude`. The captured prompt is NOT passed
+			// as an arg — the embedded terminal spawns `claude` before its real
+			// dimensions are delivered, and an argv prompt does not flush its turn
+			// until a later resize/input event. Instead it is typed into the ready
+			// TUI by {@link TerminalChatView} via {@link consumeInitialPrompt}.
+			args: resumeSessionId ? ['--resume', resumeSessionId] : [],
 			cwd: launch.cwd,
 			name: 'Claude',
 			icon: Codicon.terminal,
@@ -266,6 +276,14 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
 		const next = new Set(this._terminalSessionIds.get());
 		next.add(session.sessionId);
 		this._terminalSessionIds.set(next, undefined);
+	}
+
+	consumeInitialPrompt(sessionId: string): string | undefined {
+		const prompt = this._initialPrompts.get(sessionId);
+		if (prompt !== undefined) {
+			this._initialPrompts.delete(sessionId);
+		}
+		return prompt;
 	}
 
 	disposeTerminal(sessionId: string): void {
