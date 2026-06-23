@@ -21,14 +21,14 @@ import { IAgentPluginManager, ISyncedCustomization } from '../../common/agentPlu
 import { createSchema, platformSessionSchema, schemaProperty } from '../../common/agentHostSchema.js';
 import { ClaudePermissionMode, ClaudeSessionConfigKey, narrowClaudePermissionMode } from '../../common/claudeSessionConfigKeys.js';
 import { SessionConfigKey } from '../../common/sessionConfigKeys.js';
-import { AgentHostClaudeUseCliEnvVar, AgentProvider, AgentSession, AgentSignal, GITHUB_COPILOT_PROTECTED_RESOURCE, IAgent, IAgentCreateSessionConfig, IAgentCreateSessionResult, IAgentDescriptor, IAgentMaterializeSessionEvent, IAgentModelInfo, IAgentResolveSessionConfigParams, IAgentSessionConfigCompletionsParams, IAgentSessionMetadata, IAgentSessionProjectInfo, isAgentEnabled } from '../../common/agentService.js';
+import { AgentHostClaudeUseCliEnvVar, AgentProvider, AgentSession, AgentSignal, GITHUB_COPILOT_PROTECTED_RESOURCE, GITHUB_REPO_PROTECTED_RESOURCE, IAgent, IAgentCreateSessionConfig, IAgentCreateSessionResult, IAgentDescriptor, IAgentMaterializeSessionEvent, IAgentModelInfo, IAgentResolveSessionConfigParams, IAgentSessionConfigCompletionsParams, IAgentSessionMetadata, IAgentSessionProjectInfo, isAgentEnabled } from '../../common/agentService.js';
 import { ActionType, NotificationType, type INotification } from '../../common/state/sessionActions.js';
 import type { ResolveSessionConfigResult, SessionConfigCompletionsResult } from '../../common/state/protocol/commands.js';
 import { AHP_AUTH_REQUIRED, ProtocolError } from '../../common/state/sessionProtocol.js';
 import { ProtectedResourceMetadata, type AgentSelection, type ModelSelection, type ToolDefinition } from '../../common/state/protocol/state.js';
 import { isSubagentSession, parseSubagentSessionUri, ChatInputResponseKind, ROOT_STATE_URI, SessionStatus, type ClientPluginCustomization, type Customization, type MessageAttachment, type PendingMessage, type ChatInputAnswer, type ToolCallResult, type Turn } from '../../common/state/sessionState.js';
 import { IAgentConfigurationService } from '../agentConfigurationService.js';
-import { IAgentHostGitService } from '../agentHostGitService.js';
+import { IAgentHostGitService } from '../../common/agentHostGitService.js';
 import { PendingRequestRegistry } from '../../common/pendingRequestRegistry.js';
 import { projectFromCopilotContext } from '../copilot/copilotGitProject.js';
 import { IClaudeAgentSdkService } from './claudeAgentSdkService.js';
@@ -300,7 +300,10 @@ export class ClaudeAgent extends Disposable implements IAgent {
 		// user's Claude credentials, so there is no Copilot resource to gate
 		// on. Returning an empty list means the workbench never resolves a
 		// GitHub token for Claude and the session type is not Copilot-gated.
-		return this._useSubscription ? [] : [GITHUB_COPILOT_PROTECTED_RESOURCE];
+		return this._useSubscription ? [] : [
+			GITHUB_COPILOT_PROTECTED_RESOURCE,
+			GITHUB_REPO_PROTECTED_RESOURCE,
+		];
 	}
 
 	/**
@@ -327,6 +330,9 @@ export class ClaudeAgent extends Disposable implements IAgent {
 	async authenticate(resource: string, token: string): Promise<boolean> {
 		if (this._useSubscription) {
 			// No Copilot proxy in subscription mode — nothing to authenticate.
+			return true;
+		}
+		if (resource === GITHUB_REPO_PROTECTED_RESOURCE.resource) {
 			return true;
 		}
 		if (resource !== GITHUB_COPILOT_PROTECTED_RESOURCE.resource) {

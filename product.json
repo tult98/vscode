@@ -31,7 +31,8 @@
 	"linuxIconName": "hero-code",
 	"licenseFileName": "LICENSE.txt",
 	"reportIssueUrl": "https://github.com/microsoft/vscode/issues/new",
-	"nodejsRepository": "https://nodejs.org",
+	"nodejsArtifactFeed": "",
+	"electronArtifactFeed": "",
 	"urlProtocol": "hero-code",
 	"extensionsGallery": {
 		"serviceUrl": "https://open-vsx.org/vscode/gallery",
