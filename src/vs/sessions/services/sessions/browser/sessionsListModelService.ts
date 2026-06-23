@@ -126,6 +126,14 @@ export class SessionsListModelService extends Disposable implements ISessionsLis
 				this._lastKnownStatus.set(session.sessionId, session.status.get());
 			}
 		}));
+
+		// When a session is replaced (e.g. the `/clear` slash command continues the
+		// same process under a fresh session id), transfer the UI-only state from
+		// the old id to the new one so a pinned/read session keeps its state across
+		// the replace instead of being dropped by the trailing removal event.
+		this._register(this.sessionsManagementService.onDidReplaceSession(({ from, to }) => {
+			this.transferSession(from, to);
+		}));
 	}
 
 	// -- Pinning --
@@ -219,6 +227,45 @@ export class SessionsListModelService extends Disposable implements ISessionsLis
 					return { ...Codicon.circleFilled, color: themeColorFromId('textLink.foreground') };
 				}
 				return { ...Codicon.circleSmallFilled, color: themeColorFromId('agentSessionReadIndicator.foreground') };
+		}
+	}
+
+	// -- Replace --
+
+	/**
+	 * Move per-session UI state from {@link from} to {@link to} when a session is
+	 * replaced under a new id. Each piece transfers only when the source id is
+	 * actually present, so an unpinned/already-read session produces no events.
+	 */
+	private transferSession(from: ISession, to: ISession): void {
+		if (from.sessionId === to.sessionId) {
+			return;
+		}
+
+		const changes: { sessionId: string; kind: SessionListModelChangeKind }[] = [];
+
+		if (this._pinnedSessionIds.delete(from.sessionId)) {
+			this._pinnedSessionIds.add(to.sessionId);
+			this.saveSet(SessionsListModelService.PINNED_SESSIONS_KEY, this._pinnedSessionIds);
+			changes.push({ sessionId: from.sessionId, kind: SessionListModelChangeKind.Pinned });
+			changes.push({ sessionId: to.sessionId, kind: SessionListModelChangeKind.Pinned });
+		}
+
+		if (this._readSessionIds.delete(from.sessionId)) {
+			this._readSessionIds.add(to.sessionId);
+			this.saveSet(SessionsListModelService.READ_SESSIONS_KEY, this._readSessionIds);
+			changes.push({ sessionId: from.sessionId, kind: SessionListModelChangeKind.Read });
+			changes.push({ sessionId: to.sessionId, kind: SessionListModelChangeKind.Read });
+		}
+
+		const lastStatus = this._lastKnownStatus.get(from.sessionId);
+		if (lastStatus !== undefined) {
+			this._lastKnownStatus.delete(from.sessionId);
+			this._lastKnownStatus.set(to.sessionId, lastStatus);
+		}
+
+		if (changes.length > 0) {
+			this._onDidChange.fire({ changes });
 		}
 	}
 

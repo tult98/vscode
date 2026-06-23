@@ -54,16 +54,19 @@ suite('SessionsListModelService', () => {
 	const disposables = ensureNoDisposablesAreLeakedInTestSuite();
 	let service: SessionsListModelService;
 	let sessionsChangedEmitter: Emitter<ISessionsChangeEvent>;
+	let sessionReplacedEmitter: Emitter<{ readonly from: ISession; readonly to: ISession }>;
 	let activeSession: ISettableObservable<IActiveSession | undefined>;
 
 	setup(() => {
 		const instantiationService = disposables.add(new TestInstantiationService());
 		instantiationService.stub(IStorageService, disposables.add(new InMemoryStorageService()));
 		sessionsChangedEmitter = disposables.add(new Emitter<ISessionsChangeEvent>());
+		sessionReplacedEmitter = disposables.add(new Emitter<{ readonly from: ISession; readonly to: ISession }>());
 		activeSession = observableValue('activeSession', undefined);
 		instantiationService.stub(ISessionsManagementService, {
 			...mock<ISessionsManagementService>(),
 			onDidChangeSessions: sessionsChangedEmitter.event,
+			onDidReplaceSession: sessionReplacedEmitter.event,
 		});
 		instantiationService.stub(ISessionsService, { ...mock<ISessionsService>(), activeSession });
 		service = disposables.add(instantiationService.createInstance(SessionsListModelService));
@@ -296,6 +299,36 @@ suite('SessionsListModelService', () => {
 		]);
 	});
 
+	// -- Replace --
+
+	test('transfers pinned and read state from replaced session to its successor', () => {
+		const from = createSession('s1');
+		const to = createSession('s2');
+		service.pinSession(from);
+		service.markRead(from);
+
+		// A replace fires onDidReplaceSession first, then a removal of the old id
+		// (as SessionsManagementService does); the new id must keep the state.
+		sessionReplacedEmitter.fire({ from, to });
+		sessionsChangedEmitter.fire({ added: [], removed: [from], changed: [to] });
+
+		assert.deepStrictEqual(
+			[service.isSessionPinned(from), service.isSessionPinned(to), service.isSessionRead(from), service.isSessionRead(to)],
+			[false, true, false, true]
+		);
+	});
+
+	test('replace does not fire when the session has no state', () => {
+		const from = createSession('s1');
+		const to = createSession('s2');
+		let changeCount = 0;
+		disposables.add(service.onDidChange(() => changeCount++));
+
+		sessionReplacedEmitter.fire({ from, to });
+
+		assert.strictEqual(changeCount, 0);
+	});
+
 	// -- Cleanup --
 
 	test('cleans up state when session is removed', () => {
@@ -413,7 +446,7 @@ suite('SessionsListModelService', () => {
 
 		const instantiationService = disposables.add(new TestInstantiationService());
 		instantiationService.stub(IStorageService, storageService);
-		instantiationService.stub(ISessionsManagementService, { ...mock<ISessionsManagementService>(), onDidChangeSessions: disposables.add(new Emitter<ISessionsChangeEvent>()).event });
+		instantiationService.stub(ISessionsManagementService, { ...mock<ISessionsManagementService>(), onDidChangeSessions: disposables.add(new Emitter<ISessionsChangeEvent>()).event, onDidReplaceSession: disposables.add(new Emitter<{ readonly from: ISession; readonly to: ISession }>()).event });
 		instantiationService.stub(ISessionsService, { ...mock<ISessionsService>(), activeSession: constObservable(undefined) });
 		const loadedService = disposables.add(instantiationService.createInstance(SessionsListModelService));
 
@@ -429,7 +462,7 @@ suite('SessionsListModelService', () => {
 
 		const instantiationService = disposables.add(new TestInstantiationService());
 		instantiationService.stub(IStorageService, storageService);
-		instantiationService.stub(ISessionsManagementService, { ...mock<ISessionsManagementService>(), onDidChangeSessions: disposables.add(new Emitter<ISessionsChangeEvent>()).event });
+		instantiationService.stub(ISessionsManagementService, { ...mock<ISessionsManagementService>(), onDidChangeSessions: disposables.add(new Emitter<ISessionsChangeEvent>()).event, onDidReplaceSession: disposables.add(new Emitter<{ readonly from: ISession; readonly to: ISession }>()).event });
 		instantiationService.stub(ISessionsService, { ...mock<ISessionsService>(), activeSession: constObservable(undefined) });
 		const loadedService = disposables.add(instantiationService.createInstance(SessionsListModelService));
 
