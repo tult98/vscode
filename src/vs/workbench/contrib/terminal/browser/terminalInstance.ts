@@ -1758,7 +1758,11 @@ export class TerminalInstance extends Disposable implements ITerminalInstance {
 				}
 			});
 		} else {
-			if (exitMessage) {
+			if (exitMessage && this._shellLaunchConfig.ignoreShellProcessExitNotification) {
+				// The terminal surfaces its own exit state (e.g. the Agents Window
+				// session terminal); don't leak the generic exit notification.
+				this._logService.warn(exitMessage);
+			} else if (exitMessage) {
 				const failedDuringLaunch = this._processManager.processState === ProcessState.KilledDuringLaunch;
 				if (failedDuringLaunch || (this._terminalConfigurationService.config.showExitAlert && this.xterm?.lastInputEvent !== /*Ctrl+D*/'\x04')) {
 					this._notificationService.notify({

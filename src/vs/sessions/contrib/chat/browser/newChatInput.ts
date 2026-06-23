@@ -400,7 +400,9 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 			}
 		}));
 
-		this._register(this._editor.onDidFocusEditorWidget(() => this._onDidFocus.fire()));
+		this._register(this._editor.onDidFocusEditorWidget(() => {
+			this._onDidFocus.fire();
+		}));
 		this._register(this._editor.onDidBlurEditorWidget(() => this._onDidBlur.fire()));
 
 		this._register(this._editor.onKeyDown(e => {

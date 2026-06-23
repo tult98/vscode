@@ -8,7 +8,7 @@ import { Event } from '../../../../../../base/common/event.js';
 import { Disposable, DisposableMap, DisposableStore, toDisposable } from '../../../../../../base/common/lifecycle.js';
 import { ThemeIcon } from '../../../../../../base/common/themables.js';
 import { localize } from '../../../../../../nls.js';
-import { AgentHostEnabledSettingId, claudePreferAgentHostSettingId, IAgentHostService, shouldSurfaceLocalAgentHostProvider, type AgentProvider } from '../../../../../../platform/agentHost/common/agentService.js';
+import { AgentHostEnabledSettingId, ClaudeNativeCliSettingId, claudePreferAgentHostSettingId, IAgentHostService, shouldSurfaceLocalAgentHostProvider, type AgentProvider } from '../../../../../../platform/agentHost/common/agentService.js';
 import { type ProtectedResourceMetadata } from '../../../../../../platform/agentHost/common/state/protocol/state.js';
 import { type AgentInfo, type RootState } from '../../../../../../platform/agentHost/common/state/sessionState.js';
 import { IConfigurationService } from '../../../../../../platform/configuration/common/configuration.js';
@@ -148,7 +148,10 @@ export class AgentHostContribution extends Disposable implements IWorkbenchContr
 		// the relevant setting unregisters / re-registers Claude live.
 		this._register(this._configurationService.onDidChangeConfiguration(e => {
 			const relevantSetting = claudePreferAgentHostSettingId(this._isSessionsWindow);
-			if (!e.affectsConfiguration(relevantSetting)) {
+			// The native-CLI switch also surfaces the agent host's Claude.
+			const claudeSurfacingChanged = e.affectsConfiguration(relevantSetting)
+				|| (this._isSessionsWindow && e.affectsConfiguration(ClaudeNativeCliSettingId));
+			if (!claudeSurfacingChanged) {
 				return;
 			}
 			const current = this._agentHostService.rootState.value;
@@ -228,7 +231,8 @@ export class AgentHostContribution extends Disposable implements IWorkbenchContr
 			customAgentTarget: this._isSessionsWindow ? undefined : Target.GitHubCopilot,
 			canDelegate: true,
 			requiresCustomModels: true,
-			supportsAutoModel: agentHostProviderSupportsAutoModel(agent.provider),
+			supportsAutoModel: agentHostProviderSupportsAutoModel(agent.provider)
+				|| (agent.provider === 'claude' && (this._configurationService.getValue<boolean>(ClaudeNativeCliSettingId) ?? false)),
 			agentHostProviderId: agent.provider,
 			supportsDelegation: true,
 			capabilities: {

@@ -806,6 +806,41 @@ suite('AgentService (node dispatcher)', () => {
 			assert.strictEqual(sessions[0].summary, 'Auto-generated Title');
 		});
 
+		test('listSessions prefers the file summary over a placeholder live title equal to the session id', async () => {
+			// A terminal Claude session restored before Claude wrote its ai-title
+			// gets the bare session id baked into live state. Once the file later
+			// carries a real ai-title, listSessions must surface that instead of
+			// the stale id. A session whose live title is a real generated title
+			// must keep it (Copilot/SDK regression guard).
+			const agent = new MockAgent('mock');
+			disposables.add(toDisposable(() => agent.dispose()));
+			agent.sessionMetadataOverrides = { summary: 'keep-pinned-session-clear' };
+
+			const placeholderUri = AgentSession.uri('mock', 'sess-placeholder');
+			const realTitleUri = AgentSession.uri('mock', 'sess-realtitle');
+			const agentSessions = (agent as unknown as { _sessions: Map<string, URI> })._sessions;
+			agentSessions.set('sess-placeholder', placeholderUri);
+			agentSessions.set('sess-realtitle', realTitleUri);
+
+			service.registerProvider(agent);
+
+			service.stateManager.restoreSession(
+				{ resource: placeholderUri.toString(), provider: 'mock', title: 'sess-placeholder', status: SessionStatus.Idle, createdAt: 0, modifiedAt: 0 },
+				[],
+			);
+			service.stateManager.restoreSession(
+				{ resource: realTitleUri.toString(), provider: 'mock', title: 'Real Generated Title', status: SessionStatus.Idle, createdAt: 0, modifiedAt: 0 },
+				[],
+			);
+
+			const listed = await service.listSessions();
+			const summaryFor = (uri: URI) => listed.find(s => s.session.toString() === uri.toString())?.summary;
+			assert.deepStrictEqual(
+				{ placeholder: summaryFor(placeholderUri), realTitle: summaryFor(realTitleUri) },
+				{ placeholder: 'keep-pinned-session-clear', realTitle: 'Real Generated Title' },
+			);
+		});
+
 		test('listSessions never returns subagent sessions', async () => {
 			service.registerProvider(copilotAgent);
 			const parentSession = await service.createSession({ provider: 'copilot' });

@@ -52,6 +52,7 @@ import { AgentHostStateManager } from '../../node/agentHostStateManager.js';
 import { IAgentHostGitService } from '../../node/agentHostGitService.js';
 import { ClaudeAgent } from '../../node/claude/claudeAgent.js';
 import { IClaudeAgentSdkService } from '../../node/claude/claudeAgentSdkService.js';
+import type { IClaudeListedSession } from '../../node/claude/claudeCliSessionStore.js';
 import { IAgentPluginManager } from '../../common/agentPluginManager.js';
 import { ClaudeProxyService, IClaudeProxyService } from '../../node/claude/claudeProxyService.js';
 import { ICopilotApiService, type ICopilotApiServiceRequestOptions } from '../../node/shared/copilotApiService.js';
@@ -329,7 +330,7 @@ class ProxyRoundTripSdkService implements IClaudeAgentSdkService {
 
 	readonly warmQueries: RoundTripWarmQuery[] = [];
 
-	async listSessions(): Promise<readonly SDKSessionInfo[]> {
+	async listSessions(): Promise<readonly IClaudeListedSession[]> {
 		return [];
 	}
 

@@ -91,6 +91,7 @@ export const NotificationType = {
 	SessionAdded: 'root/sessionAdded',
 	SessionRemoved: 'root/sessionRemoved',
 	SessionSummaryChanged: 'root/sessionSummaryChanged',
+	SessionReplaced: 'root/sessionReplaced',
 	AuthRequired: 'auth/required',
 } as const;
 export type NotificationType = typeof NotificationType[keyof typeof NotificationType];
@@ -143,7 +144,25 @@ export type ProtocolNotification =
 	| ({ type: 'root/sessionAdded' } & SessionAddedParams)
 	| ({ type: 'root/sessionRemoved' } & SessionRemovedParams)
 	| ({ type: 'root/sessionSummaryChanged' } & SessionSummaryChangedParams)
+	| ({ type: 'root/sessionReplaced' } & SessionReplacedParams)
 	| ({ type: 'auth/required' } & AuthRequiredParams);
+
+/**
+ * Fork-local notification (not part of the vendored protocol): a native
+ * `claude` CLI process changed its session id in place — the `/clear` slash
+ * command abandons one conversation and continues under a fresh id within the
+ * same process. Carries serialized session URIs so the client re-keys the live
+ * terminal `from`→`to` instead of spawning a duplicate. Local Claude sessions
+ * deliver notifications by object reference, so this needs no wire schema.
+ */
+export interface SessionReplacedParams {
+	/** Channel URI this notification belongs to (the root channel). */
+	channel: string;
+	/** URI of the abandoned session. */
+	from: string;
+	/** URI of the continuation session that now carries the conversation. */
+	to: string;
+}
 
 export type RootAction = IRootAction_;
 export type SessionAction = ISessionAction_;

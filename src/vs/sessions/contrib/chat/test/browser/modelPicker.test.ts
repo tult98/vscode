@@ -4,11 +4,14 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { constObservable } from '../../../../../base/common/observable.js';
+import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
+import { AgentSessionProviders } from '../../../../../workbench/contrib/chat/browser/agentSessions/agentSessions.js';
 import { ILanguageModelChatMetadataAndIdentifier } from '../../../../../workbench/contrib/chat/common/languageModels.js';
 import { ISessionsProvidersService } from '../../../../services/sessions/browser/sessionsProvidersService.js';
 import { ISessionsProvider, ISessionModelPickerOptions } from '../../../../services/sessions/common/sessionsProvider.js';
-import { ISession } from '../../../../services/sessions/common/session.js';
+import { ISession, ISessionWorkspace, SessionStatus } from '../../../../services/sessions/common/session.js';
 import { sessionHasNoSelectableModel } from '../../browser/modelPicker.js';
 
 const DEFAULT_OPTIONS: ISessionModelPickerOptions = {
@@ -19,7 +22,27 @@ const DEFAULT_OPTIONS: ISessionModelPickerOptions = {
 };
 
 function createSession(providerId: string): ISession {
-	return { providerId, sessionId: `${providerId}:/session` } as ISession;
+	// A non-Claude resource scheme so `getNativeTerminalLaunch` (consulted by
+	// `sessionHasNoSelectableModel`) returns `undefined` and the regular
+	// model-gate logic applies.
+	return { providerId, sessionId: `${providerId}:/session`, resource: URI.from({ scheme: providerId, path: '/session' }) } as ISession;
+}
+
+/**
+ * A terminal-bound local Claude session: `agent-host-claude` scheme with a
+ * local file working directory, so {@link getNativeTerminalLaunch} qualifies it
+ * for the embedded `claude` terminal (which owns model selection).
+ */
+function createClaudeTerminalSession(): ISession {
+	const cwd = URI.file('/workspace');
+	const workspace = { folders: [{ root: cwd, workingDirectory: cwd, name: 'workspace', description: undefined }] } as ISessionWorkspace;
+	return {
+		providerId: 'claude',
+		sessionId: 'agent-host-claude:/abc',
+		resource: URI.from({ scheme: AgentSessionProviders.AgentHostClaude, path: '/abc' }),
+		workspace: constObservable(workspace),
+		status: constObservable(SessionStatus.Untitled),
+	} as unknown as ISession;
 }
 
 /**
@@ -64,5 +87,12 @@ suite('sessionHasNoSelectableModel', () => {
 	test('returns false when empty but Auto is available (fallback)', () => {
 		const service = createProvidersService('p', { models: [], showAutoModel: true });
 		assert.strictEqual(sessionHasNoSelectableModel(createSession('p'), service), false);
+	});
+
+	test('returns false for terminal-bound Claude even when empty and Auto is unavailable', () => {
+		// Local Claude runs terminal-only; the native CLI owns model selection, so
+		// a missing model must never block sending.
+		const service = createProvidersService('claude', { models: [], showAutoModel: false });
+		assert.strictEqual(sessionHasNoSelectableModel(createClaudeTerminalSession(), service), false);
 	});
 });

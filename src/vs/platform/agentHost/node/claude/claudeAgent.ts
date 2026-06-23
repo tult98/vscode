@@ -3,111 +3,46 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import type { CCAModel } from '@vscode/copilot-api';
-import type { Options, SDKSessionInfo, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { SequencerByKey } from '../../../../base/common/async.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { CancellationError } from '../../../../base/common/errors.js';
-import { Emitter } from '../../../../base/common/event.js';
+import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable, DisposableMap, IDisposable } from '../../../../base/common/lifecycle.js';
-import { IObservable, observableValue } from '../../../../base/common/observable.js';
+import { constObservable, IObservable } from '../../../../base/common/observable.js';
 import { URI } from '../../../../base/common/uri.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { localize } from '../../../../nls.js';
+import { IFileService } from '../../../files/common/files.js';
 import { IInstantiationService } from '../../../instantiation/common/instantiation.js';
 import { ILogService } from '../../../log/common/log.js';
-import { IProductService } from '../../../product/common/productService.js';
 import { IAgentPluginManager, ISyncedCustomization } from '../../common/agentPluginManager.js';
 import { createSchema, platformSessionSchema, schemaProperty } from '../../common/agentHostSchema.js';
 import { ClaudePermissionMode, ClaudeSessionConfigKey, narrowClaudePermissionMode } from '../../common/claudeSessionConfigKeys.js';
-import { createClaudeThinkingLevelSchema, isClaudeEffortLevel } from '../../common/claudeModelConfig.js';
 import { SessionConfigKey } from '../../common/sessionConfigKeys.js';
-import { AgentProvider, AgentSession, AgentSignal, GITHUB_COPILOT_PROTECTED_RESOURCE, IAgent, IAgentCreateSessionConfig, IAgentCreateSessionResult, IAgentDescriptor, IAgentMaterializeSessionEvent, IAgentModelInfo, IAgentResolveSessionConfigParams, IAgentSessionConfigCompletionsParams, IAgentSessionMetadata, IAgentSessionProjectInfo } from '../../common/agentService.js';
-import { ActionType } from '../../common/state/sessionActions.js';
+import { AgentHostClaudeUseCliEnvVar, AgentProvider, AgentSession, AgentSignal, GITHUB_COPILOT_PROTECTED_RESOURCE, IAgent, IAgentCreateSessionConfig, IAgentCreateSessionResult, IAgentDescriptor, IAgentMaterializeSessionEvent, IAgentModelInfo, IAgentResolveSessionConfigParams, IAgentSessionConfigCompletionsParams, IAgentSessionMetadata, IAgentSessionProjectInfo, isAgentEnabled } from '../../common/agentService.js';
+import { ActionType, NotificationType, type INotification } from '../../common/state/sessionActions.js';
 import type { ResolveSessionConfigResult, SessionConfigCompletionsResult } from '../../common/state/protocol/commands.js';
 import { AHP_AUTH_REQUIRED, ProtocolError } from '../../common/state/sessionProtocol.js';
-import { PolicyState, ProtectedResourceMetadata, type AgentSelection, type ModelSelection, type ToolDefinition } from '../../common/state/protocol/state.js';
-import { isSubagentSession, parseSubagentSessionUri, ChatInputResponseKind, type ClientPluginCustomization, type Customization, type MessageAttachment, type PendingMessage, type ChatInputAnswer, type ToolCallResult, type Turn } from '../../common/state/sessionState.js';
+import { ProtectedResourceMetadata, type AgentSelection, type ModelSelection, type ToolDefinition } from '../../common/state/protocol/state.js';
+import { isSubagentSession, parseSubagentSessionUri, ChatInputResponseKind, ROOT_STATE_URI, SessionStatus, type ClientPluginCustomization, type Customization, type MessageAttachment, type PendingMessage, type ChatInputAnswer, type ToolCallResult, type Turn } from '../../common/state/sessionState.js';
 import { IAgentConfigurationService } from '../agentConfigurationService.js';
 import { IAgentHostGitService } from '../agentHostGitService.js';
 import { PendingRequestRegistry } from '../../common/pendingRequestRegistry.js';
 import { projectFromCopilotContext } from '../copilot/copilotGitProject.js';
-import { ICopilotApiService } from '../shared/copilotApiService.js';
 import { IClaudeAgentSdkService } from './claudeAgentSdkService.js';
 import { mapSessionMessagesToTurns } from './claudeReplayMapper.js';
 import { getSubagentTranscript } from './claudeSubagentResolver.js';
 import { ClaudeAgentSession } from './claudeAgentSession.js';
 import { handleCanUseTool } from './claudeCanUseTool.js';
 import type { IAgentServerToolHost } from '../../common/agentServerTools.js';
-import { tryParseClaudeModelId } from './claudeModelId.js';
 import { resolvePromptToContentBlocks } from './claudePromptResolver.js';
 import { IClaudeProxyHandle, IClaudeProxyService } from './claudeProxyService.js';
 import { readClaudePermissionMode } from './claudeSessionPermissionMode.js';
 import { ClaudeSessionMetadataStore, IClaudeSessionOverlay } from './claudeSessionMetadataStore.js';
-
-const USER_AGENT_PREFIX = 'vscode_claude_code';
-
-/**
- * Returns true if `m` is a Claude-family model that should be advertised
- * to clients picking a model for the Claude provider.
- *
- * Combines the same surface checks the extension uses (vendor, picker
- * eligibility, tool-call support, `/v1/messages` endpoint) with a parse
- * of the model id via {@link tryParseClaudeModelId}, which excludes
- * synthetic ids like `auto` that aren't real Claude endpoints.
- */
-function isClaudeModel(m: CCAModel): boolean {
-	return (
-		m.vendor === 'Anthropic' &&
-		!!m.supported_endpoints?.includes('/v1/messages') &&
-		!!m.model_picker_enabled &&
-		!!m.capabilities?.supports?.tool_calls &&
-		tryParseClaudeModelId(m.id) !== undefined
-	);
-}
-
-/**
- * Augments the published `@vscode/copilot-api` `CCAModelSupports` with the
- * per-model `adaptive_thinking` / `reasoning_effort` fields the runtime
- * CAPI `/models` payload already carries but the SDK type doesn't yet
- * declare. Tracked at microsoft/vscode-capi#85; remove this when the SDK
- * catches up. Mirror of the same pattern at
- * `extensions/copilot/src/platform/endpoint/common/endpointProvider.ts`
- * (its locally-declared `IChatModelCapabilities`).
- */
-interface IClaudeModelSupports {
-	readonly adaptive_thinking?: boolean;
-	readonly reasoning_effort?: readonly string[];
-}
-
-/**
- * Project a {@link CCAModel} into the agent host's
- * {@link IAgentModelInfo} surface. The returned `provider` is the
- * agent's id (`'claude'`) — clients filter the root state's model list
- * by provider, so this must match {@link ClaudeAgent.id}, NOT the
- * upstream `vendor: 'Anthropic'` field.
- */
-function toAgentModelInfo(m: CCAModel, provider: AgentProvider): IAgentModelInfo {
-	const supports = m.capabilities?.supports;
-	const supportedEfforts = ((supports as IClaudeModelSupports | undefined)?.reasoning_effort ?? []).filter(isClaudeEffortLevel);
-	const configSchema = createClaudeThinkingLevelSchema(supportedEfforts);
-	const policyState = m.policy?.state as PolicyState | undefined;
-	const multiplier = m.billing?.multiplier;
-	return {
-		provider,
-		// CAPI/endpoint format, dotted version (e.g. `claude-haiku-4.5`) — the
-		// canonical id through `ModelSelection.id`. Convert to SDK format at SDK
-		// seams via `toSdkModelId`.
-		id: m.id,
-		name: m.name,
-		maxContextWindow: m.capabilities?.limits?.max_context_window_tokens,
-		supportsVision: !!supports?.vision,
-		...(configSchema ? { configSchema } : {}),
-		...(policyState ? { policyState } : {}),
-		...(typeof multiplier === 'number' ? { _meta: { multiplierNumeric: multiplier } } : {}),
-	};
-}
+import { ClaudeCliSessionStatus, ClaudeCliSessionWatcher, IClaudeCliSessionChange, IClaudeCliSessionReplace } from './claudeCliSessionWatcher.js';
+import type { IClaudeListedSession } from './claudeCliSessionStore.js';
 
 // Single source of truth for narrowing an arbitrary runtime value to
 // the closed `ClaudePermissionMode` union now lives in
@@ -122,6 +57,15 @@ function toAgentModelInfo(m: CCAModel, provider: AgentProvider): IAgentModelInfo
 // (pre-materialize fields: project, abortController, provisionalModel,
 // provisionalConfig). The legacy `IClaudeProvisionalSession` map shape
 // was retired in Phase 10.5 Step 3a.
+
+/** Map the CLI's reported session status onto the protocol `SessionStatus`. */
+function toProtocolStatus(status: ClaudeCliSessionStatus): SessionStatus {
+	switch (status) {
+		case 'busy': return SessionStatus.InProgress;
+		case 'waiting': return SessionStatus.InputNeeded;
+		case 'idle': return SessionStatus.Idle;
+	}
+}
 
 /**
  * Phase 4 skeleton {@link IAgent} provider for the Claude Agent SDK.
@@ -152,8 +96,11 @@ export class ClaudeAgent extends Disposable implements IAgent {
 	private readonly _onDidCustomizationsChange = this._register(new Emitter<void>());
 	readonly onDidCustomizationsChange = this._onDidCustomizationsChange.event;
 
-	private readonly _models = observableValue<readonly IAgentModelInfo[]>(this, []);
-	readonly models: IObservable<readonly IAgentModelInfo[]> = this._models;
+	// Claude sessions run terminal-only — the embedded `claude` CLI manages its
+	// own model selection (`/model`) and the terminal launch never passes
+	// `--model`, so the agent host publishes no model catalogue. The `IAgent`
+	// contract still requires `models`, so report an empty, constant list.
+	readonly models: IObservable<readonly IAgentModelInfo[]> = constObservable([]);
 
 	private _githubToken: string | undefined;
 	private _proxyHandle: IClaudeProxyHandle | undefined;
@@ -194,6 +141,24 @@ export class ClaudeAgent extends Disposable implements IAgent {
 	readonly onDidMaterializeSession = this._onDidMaterializeSession.event;
 
 	/**
+	 * Ephemeral protocol notifications this agent raises directly, forwarded
+	 * to clients by {@link IAgentService.registerProvider}. Used to surface
+	 * live changes to terminal-only Claude sessions (created and advanced by an
+	 * external `claude` CLI) that never flow through the in-process turn
+	 * lifecycle. See {@link _cliWatcher} / {@link _handleCliSessionChange}.
+	 */
+	private readonly _onDidEmitNotification = this._register(new Emitter<INotification>());
+	readonly onDidEmitNotification: Event<INotification> = this._onDidEmitNotification.event;
+
+	/**
+	 * Watches the native `claude` CLI's on-disk session store for live
+	 * lifecycle / activity changes. Present only in subscription (CLI) mode,
+	 * where Claude runs terminal-only and the agent host does not orchestrate
+	 * turns. `undefined` in Copilot-proxy mode.
+	 */
+	private readonly _cliWatcher: ClaudeCliSessionWatcher | undefined;
+
+	/**
 	 * Per-session-id serializer shared by {@link disposeSession} and
 	 * {@link shutdown}. Phase 5 dispose work is synchronous, so the queued
 	 * tasks resolve immediately and the sequencer is mostly a no-op. The
@@ -228,19 +193,59 @@ export class ClaudeAgent extends Disposable implements IAgent {
 		return this._sessions.get(sessionId)?.session;
 	}
 
+	/**
+	 * Subscription mode (implied by CLI transport, `chat.agents.claude.nativeCli`):
+	 * authenticate directly against Anthropic with the user's Claude Pro/Max
+	 * credentials instead of routing through the GitHub Copilot proxy. When
+	 * set, the agent declares no protected resources, never starts the proxy,
+	 * advertises {@link buildSubscriptionClaudeModels}, and the SDK subprocess
+	 * talks to `api.anthropic.com` directly (see `buildOptions`/`buildSubprocessEnv`).
+	 */
+	private readonly _useSubscription: boolean;
+
 	constructor(
 		@ILogService private readonly _logService: ILogService,
-		@ICopilotApiService private readonly _copilotApiService: ICopilotApiService,
 		@IClaudeProxyService private readonly _claudeProxyService: IClaudeProxyService,
 		@IClaudeAgentSdkService private readonly _sdkService: IClaudeAgentSdkService,
 		@IAgentHostGitService private readonly _gitService: IAgentHostGitService,
 		@IAgentConfigurationService private readonly _configurationService: IAgentConfigurationService,
 		@IInstantiationService private readonly _instantiationService: IInstantiationService,
 		@IAgentPluginManager private readonly _pluginManager: IAgentPluginManager,
-		@IProductService private readonly _productService: IProductService,
+		@IFileService private readonly _fileService: IFileService,
 	) {
 		super();
+		// CLI transport implies subscription-style auth: the spawned `claude`
+		// binary talks to Anthropic directly, so the proxy / Copilot sign-in
+		// path must be bypassed. Read from the env var the agent host starter
+		// forwards from `chat.agents.claude.nativeCli`; kept out of the
+		// constructor signature so the DI `createInstance(ClaudeAgent)` call
+		// sites (and tests) stay arg-free.
+		this._useSubscription = isAgentEnabled(process.env[AgentHostClaudeUseCliEnvVar], false);
 		this._metadataStore = _instantiationService.createInstance(ClaudeSessionMetadataStore, this.id);
+		if (this._useSubscription) {
+			// Subscription mode: the native `claude` CLI authenticates directly
+			// with the user's Claude Pro/Max credentials. Auth (`authenticate`)
+			// and credit reports (proxy) never fire in this mode, so there is
+			// nothing to wire.
+			this._logService.info('[Claude] Subscription mode enabled — using Claude Pro/Max credentials, bypassing Copilot proxy');
+			// Diagnostic: surface whether direct-auth credentials are actually
+			// visible to the agent host process (presence only, never the value).
+			// If both are false here, the token never propagated into this
+			// process's environment (e.g. launched from a shell without it).
+			const oauthTok = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+			const apiKey = process.env.ANTHROPIC_API_KEY;
+			this._logService.info(`[Claude] Direct-auth credentials visible to agent host: CLAUDE_CODE_OAUTH_TOKEN(len=${oauthTok?.length ?? 0}, prefix=${oauthTok?.slice(0, 13) ?? '-'}), ANTHROPIC_API_KEY(len=${apiKey?.length ?? 0})`);
+			// Terminal-only Claude sessions are created and advanced by the
+			// external `claude` CLI, so the only realtime signal that a session
+			// appeared or is working is its transcript file being written.
+			// Watch the CLI store and translate that into protocol notifications
+			// so the session list and working indicators stay live without a
+			// reload. See `claudeCliSessionWatcher.ts`.
+			this._cliWatcher = this._register(new ClaudeCliSessionWatcher(this._fileService, this._logService));
+			this._register(this._cliWatcher.onDidChangeSession(e => this._handleCliSessionChange(e)));
+			this._register(this._cliWatcher.onDidReplaceSession(e => this._handleCliSessionReplace(e)));
+			return;
+		}
 		// CAPI reports each request's billed credits via the proxy (the SDK
 		// strips `copilot_usage` from its `result`). Route every report to
 		// the originating session by the session id the proxy decoded from
@@ -248,6 +253,36 @@ export class ClaudeAgent extends Disposable implements IAgent {
 		this._register(this._claudeProxyService.onDidReportCredits(e => {
 			this._findAnySession(e.sessionId)?.recordTurnCredits(e.totalNanoAiu);
 		}));
+	}
+
+	/**
+	 * Translate a live CLI-store change into an ephemeral protocol
+	 * notification. The change carries the session's current status (a vanished
+	 * process settles to `idle`), which flips the session's status so clients
+	 * show / hide a working indicator. A `sessionSummaryChanged` for a session a
+	 * client has not yet cached makes it re-list (see
+	 * `baseAgentHostSessionsProvider._handleSessionSummaryChanged`), which is how
+	 * a brand-new terminal session enters the list.
+	 */
+	private _handleCliSessionChange(e: IClaudeCliSessionChange): void {
+		// Protocol notification URIs are serialized strings (`<provider>:/<id>`),
+		// matching what `listSessions` / `sessionAdded` carry, so the client
+		// resolves the same session id.
+		const session = AgentSession.uri(this.id, e.sessionId).toString();
+		this._onDidEmitNotification.fire({ type: NotificationType.SessionSummaryChanged, channel: ROOT_STATE_URI, session, changes: { status: toProtocolStatus(e.status) } });
+	}
+
+	/**
+	 * Translate a `/clear` continuation (one `claude` process changed its session
+	 * id in place) into a `sessionReplaced` notification, so the client re-keys
+	 * the live terminal `from`→`to` through its existing replace path instead of
+	 * adding the new id as a separate row. The abandoned `from` id is hidden from
+	 * {@link listSessions} via the watcher's superseded set.
+	 */
+	private _handleCliSessionReplace(e: IClaudeCliSessionReplace): void {
+		const from = AgentSession.uri(this.id, e.from).toString();
+		const to = AgentSession.uri(this.id, e.to).toString();
+		this._onDidEmitNotification.fire({ type: NotificationType.SessionReplaced, channel: ROOT_STATE_URI, from, to });
 	}
 
 	// #region Descriptor + auth
@@ -261,10 +296,23 @@ export class ClaudeAgent extends Disposable implements IAgent {
 	}
 
 	getProtectedResources(): ProtectedResourceMetadata[] {
-		return [GITHUB_COPILOT_PROTECTED_RESOURCE];
+		// Subscription mode authenticates directly against Anthropic with the
+		// user's Claude credentials, so there is no Copilot resource to gate
+		// on. Returning an empty list means the workbench never resolves a
+		// GitHub token for Claude and the session type is not Copilot-gated.
+		return this._useSubscription ? [] : [GITHUB_COPILOT_PROTECTED_RESOURCE];
 	}
 
-	private _ensureAuthenticated(): IClaudeProxyHandle {
+	/**
+	 * Returns the proxy handle the SDK must route through, or `undefined` in
+	 * subscription mode (the SDK talks to Anthropic directly, no proxy). In
+	 * Copilot-proxy mode an absent handle is a hard error — the caller has not
+	 * authenticated yet.
+	 */
+	private _ensureAuthenticated(): IClaudeProxyHandle | undefined {
+		if (this._useSubscription) {
+			return undefined;
+		}
 		const handle = this._proxyHandle;
 		if (!handle) {
 			throw new ProtocolError(
@@ -277,6 +325,10 @@ export class ClaudeAgent extends Disposable implements IAgent {
 	}
 
 	async authenticate(resource: string, token: string): Promise<boolean> {
+		if (this._useSubscription) {
+			// No Copilot proxy in subscription mode — nothing to authenticate.
+			return true;
+		}
 		if (resource !== GITHUB_COPILOT_PROTECTED_RESOURCE.resource) {
 			return false;
 		}
@@ -303,44 +355,7 @@ export class ClaudeAgent extends Disposable implements IAgent {
 		this._githubToken = token;
 		this._logService.info('[Claude] Auth token updated');
 		oldHandle?.dispose();
-		void this._refreshModels();
 		return true;
-	}
-
-	private async _refreshModels(): Promise<void> {
-		const tokenAtStart = this._githubToken;
-		if (!tokenAtStart) {
-			this._models.set([], undefined);
-			return;
-		}
-		try {
-			const userAgent = `${USER_AGENT_PREFIX}/${this._productService.version}`;
-			const all = await this._copilotApiService.models(tokenAtStart, { headers: { 'User-Agent': userAgent } });
-			// Stale-write guard: if `authenticate()` rotated the token
-			// while we were awaiting the model list, a newer refresh has
-			// already published the right value — don't overwrite it.
-			if (this._githubToken !== tokenAtStart) {
-				return;
-			}
-			// Stable sort surfaces the CAPI-flagged chat-default model
-			// first. The picker treats `models[0]` as the de facto
-			// default (modelPicker.ts:144 — `_selectedModel ?? models[0]`)
-			// since `IAgentModelInfo` carries no explicit `isDefault`
-			// bit. Stable comparator returns 0 for equal-priority models
-			// so CAPI's ordering wins on ties.
-			const filtered = all
-				.filter(isClaudeModel)
-				.sort((a, b) => Number(b.is_chat_default) - Number(a.is_chat_default))
-				.map(m => toAgentModelInfo(m, this.id));
-
-			this._logService.info(`[Claude] Models refreshed. Count: ${filtered.length}, ${filtered.map(m => m.name).join(', ')}`);
-			this._models.set(filtered, undefined);
-		} catch (err) {
-			this._logService.error(err, '[Claude] Failed to refresh models');
-			if (this._githubToken === tokenAtStart) {
-				this._models.set([], undefined);
-			}
-		}
 	}
 
 	// #endregion
@@ -649,14 +664,29 @@ export class ClaudeAgent extends Disposable implements IAgent {
 		// import fails (corrupt install, missing optional dep) and we let
 		// it reject, *every* provider's session list disappears — the
 		// sibling Copilot provider gets nuked too. Catch and log instead.
-		let sdkEntries: readonly SDKSessionInfo[];
+		let sdkEntries: readonly IClaudeListedSession[];
 		try {
 			sdkEntries = await this._sdkService.listSessions();
 		} catch (err) {
 			this._logService.warn('[Claude] SDK listSessions failed; surfacing empty list', err);
 			return [];
 		}
-		return Promise.all(sdkEntries.map(async entry => {
+		// Hide orphan and superseded sessions so the native CLI's `/clear`
+		// (and abandoned/empty sessions) do not accumulate as dead rows:
+		// - A `/clear` continuation marks the abandoned id superseded; its new id
+		//   carries the conversation, so drop the abandoned one.
+		// - A transcript with no assistant reply is an orphan UNLESS a live
+		//   process is running it (a brand-new session whose first turn is still
+		//   in flight, which the CLI watcher reports as live).
+		const watcher = this._cliWatcher;
+		const visibleEntries = sdkEntries.filter(entry => {
+			if (watcher?.isSuperseded(entry.sessionId)) {
+				return false;
+			}
+			const isLive = watcher ? watcher.statusFor(entry.sessionId) !== undefined : false;
+			return entry.hasContent || isLive;
+		});
+		const list = await Promise.all(visibleEntries.map(async entry => {
 			try {
 				const sessionUri = AgentSession.uri(this.id, entry.sessionId);
 				const overlay = await this._metadataStore.read(sessionUri);
@@ -667,6 +697,18 @@ export class ClaudeAgent extends Disposable implements IAgent {
 			// External session, or DB read failed: surface what the SDK gave us.
 			return this._metadataStore.project(entry, {});
 		}));
+		// The transcript carries no live status, so stamp each session's real
+		// working / awaiting-input state from the CLI's per-process state files
+		// (see {@link ClaudeCliSessionWatcher}). Sessions with no running
+		// process keep the projected default. This is what surfaces the working
+		// indicator for a session reconciled into the list.
+		if (!this._cliWatcher) {
+			return list;
+		}
+		return list.map(meta => {
+			const live = this._cliWatcher!.statusFor(AgentSession.id(meta.session));
+			return live ? { ...meta, status: toProtocolStatus(live) } : meta;
+		});
 	}
 
 	/**
@@ -1062,7 +1104,6 @@ export class ClaudeAgent extends Disposable implements IAgent {
 		this._proxyHandle?.dispose();
 		this._proxyHandle = undefined;
 		this._githubToken = undefined;
-		this._models.set([], undefined);
 	}
 }
 

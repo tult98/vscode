@@ -122,7 +122,16 @@ export class TerminalService extends Disposable implements ITerminalService {
 				return activeHostTerminal;
 			}
 		}
-		// Fallback to the last recorded active terminal if neither have focus
+		// A backgrounded (hideFromUser) terminal is not surfaced in a panel/editor host, but an
+		// embedder (e.g. the Agents window) may attach it into its own view and focus it. Return
+		// such a focused terminal so terminal commands (paste, copy, clear, …) target it instead of
+		// the last recorded active terminal. Unattached background terminals never report focus.
+		for (const backgrounded of this._backgroundedTerminalInstances) {
+			if (backgrounded.instance.hasFocus) {
+				return backgrounded.instance;
+			}
+		}
+		// Fallback to the last recorded active terminal if none have focus
 		return this._activeInstance;
 	}
 

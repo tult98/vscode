@@ -112,6 +112,20 @@ export const AgentHostClaudeAgentEnabledEnvVar = 'VSCODE_AGENT_HOST_CLAUDE_AGENT
 export const AgentHostCodexAgentEnabledEnvVar = 'VSCODE_AGENT_HOST_CODEX_AGENT_ENABLED';
 
 /**
+ * Environment variable that tells the agent host's Claude provider to drive
+ * responses by spawning the user's installed `claude` CLI binary (headless
+ * stream-json transport) instead of the in-process Claude Agent SDK. Set by the
+ * agent host starters from {@link ClaudeNativeCliSettingId}. When `'true'`, the
+ * GUI authenticates from the user's existing `claude login` (keychain /
+ * `~/.claude/.credentials.json`) with no `CLAUDE_CODE_OAUTH_TOKEN` required —
+ * the standalone binary can read the keychain where the Electron utility
+ * process cannot. Implies subscription-style auth (no Copilot proxy, no GitHub
+ * sign-in, static model catalogue). Accepts `'true'` / `'false'`; absent means
+ * "default" (`false`).
+ */
+export const AgentHostClaudeUseCliEnvVar = 'VSCODE_AGENT_HOST_CLAUDE_USE_CLI';
+
+/**
  * Resolves the effective enable state for a Claude/Codex provider from the
  * env-var value forwarded by the starter. Recognized values (case- and
  * whitespace-insensitive):
@@ -180,6 +194,27 @@ export const ClaudePreferAgentHostAgentsSettingId = 'chat.agents.claude.preferAg
 export const ClaudePreferAgentHostEditorSettingId = 'chat.editor.claude.preferAgentHost';
 
 /**
+ * Single switch that makes the **Agents Window** run Claude Code via the native
+ * `claude` CLI instead of GitHub Copilot, rendered in the normal GUI chat. When
+ * `true`:
+ *  - the agent host's Claude provider is surfaced (like
+ *    {@link ClaudePreferAgentHostAgentsSettingId}), so "Claude Code" is the
+ *    Claude implementation in the window, and
+ *  - the agent host drives the GUI chat via CLI transport (forwarded as the
+ *    starters' `claudeUseCli` / {@link AgentHostClaudeUseCliEnvVar}): it spawns
+ *    the native `claude` binary in headless `stream-json` mode, so the Claude
+ *    Agent SDK is never invoked at runtime and the CLI authenticates from the
+ *    user's own `claude login`.
+ *
+ * The transport leg is forwarded to the agent host process at spawn (see the
+ * starters' `claudeUseCli`), so it is startup-only — the agent host must be
+ * restarted for a change to take effect. The raw embedded-terminal view is a
+ * separate, independent control ("Use Claude CLI" toggle) and is not affected
+ * by this setting. EXP-backed (`experiment: { mode: 'startup' }`).
+ */
+export const ClaudeNativeCliSettingId = 'chat.agents.claude.nativeCli';
+
+/**
  * The per-window setting that selects which Claude implementation surfaces:
  * the Agents Window reads {@link ClaudePreferAgentHostAgentsSettingId}, every
  * other window reads {@link ClaudePreferAgentHostEditorSettingId}. Callers that
@@ -217,6 +252,9 @@ export function claudePreferAgentHostSettingId(isSessionsWindow: boolean): strin
  */
 export function shouldSurfaceLocalAgentHostProvider(provider: AgentProvider, configurationService: IConfigurationService, isSessionsWindow: boolean): boolean {
 	if (provider !== 'claude') {
+		return true;
+	}
+	if (isSessionsWindow && configurationService.getValue<boolean>(ClaudeNativeCliSettingId) === true) {
 		return true;
 	}
 	return configurationService.getValue<boolean>(claudePreferAgentHostSettingId(isSessionsWindow)) === true;
@@ -385,6 +423,7 @@ export interface IAgentSdkStarterSettings {
 	readonly codexHome?: string;
 	readonly codexBinaryArgs?: readonly string[];
 	readonly claudeAgentEnabled?: boolean;
+	readonly claudeUseCli?: boolean;
 	readonly codexAgentEnabled?: boolean;
 }
 
@@ -406,6 +445,9 @@ export function buildAgentSdkEnv(
 	}
 	if (settings.claudeAgentEnabled !== undefined) {
 		setIfMissing(AgentHostClaudeAgentEnabledEnvVar, settings.claudeAgentEnabled ? 'true' : 'false');
+	}
+	if (settings.claudeUseCli !== undefined) {
+		setIfMissing(AgentHostClaudeUseCliEnvVar, settings.claudeUseCli ? 'true' : 'false');
 	}
 	if (settings.codexAgentEnabled !== undefined) {
 		setIfMissing(AgentHostCodexAgentEnabledEnvVar, settings.codexAgentEnabled ? 'true' : 'false');
@@ -854,6 +896,16 @@ export interface IAgent {
 	 * summary.
 	 */
 	readonly onDidMaterializeSession?: Event<IAgentMaterializeSessionEvent>;
+
+	/**
+	 * Optional stream of ephemeral protocol notifications the agent raises
+	 * directly (outside the state manager's per-session lifecycle). The
+	 * {@link IAgentService} forwards these verbatim to clients. Used by
+	 * terminal-only agents to surface live session lifecycle / status changes
+	 * for sessions an external process owns. Omit if the agent has no such
+	 * out-of-band notifications.
+	 */
+	readonly onDidEmitNotification?: Event<INotification>;
 
 	/**
 	 * Provides the agent host's server-tool host so the provider can advertise

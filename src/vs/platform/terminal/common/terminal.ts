@@ -622,6 +622,14 @@ export interface IShellLaunchConfig {
 	isFeatureTerminal?: boolean;
 
 	/**
+	 * Whether to suppress the global "terminated with exit code" / launch-failure notification when
+	 * the process exits abnormally. Intended for embedded terminals that surface their own exit
+	 * state through dedicated UI (e.g. the Agents Window session terminal), so the generic
+	 * notification does not leak out for a terminal the user never opened directly.
+	 */
+	ignoreShellProcessExitNotification?: boolean;
+
+	/**
 	 * Whether this terminal was created by an extension.
 	 */
 	isExtensionOwnedTerminal?: boolean;

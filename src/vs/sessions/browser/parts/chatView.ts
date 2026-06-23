@@ -13,12 +13,13 @@ import { URI } from '../../../base/common/uri.js';
 import { defaultProgressBarStyles } from '../../../platform/theme/browser/defaultStyles.js';
 import { IProgressScope, ScopedProgressIndicator } from '../../../workbench/services/progress/browser/progressIndicator.js';
 import { IChat } from '../../services/sessions/common/session.js';
+import { IActiveSession } from '../../services/sessions/common/sessionsManagement.js';
 
 /**
  * Discriminates between concrete {@link AbstractChatView} subclasses without
  * requiring core code (`sessions/browser/`) to import them from contrib.
  */
-export type ChatViewKind = 'newSession' | 'newChatInSession' | 'chat';
+export type ChatViewKind = 'newSession' | 'newChatInSession' | 'chat' | 'terminal';
 
 /**
  * Options passed to a chat view when it is created.
@@ -73,8 +74,13 @@ export abstract class AbstractChatView extends Disposable implements ISerializab
 	 * Show the given chat in this view. The default implementation is a
 	 * no-op; subclasses that host a chat widget (e.g. `ChatView`) override
 	 * this to load the chat model and feed it into the widget.
+	 *
+	 * The owning {@link IActiveSession} is also passed so views that need more
+	 * than the chat itself (e.g. `TerminalChatView`, which derives the native
+	 * session id, working directory and status from the session) can react to
+	 * it. Views that only need the chat (e.g. `ChatView`) ignore it.
 	 */
-	setChat(_chat: IChat, _historyKey?: string): void {
+	setChat(_chat: IChat, _historyKey?: string, _session?: IActiveSession): void {
 		// no-op by default
 	}
 

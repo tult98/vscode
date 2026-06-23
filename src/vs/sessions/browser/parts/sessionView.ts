@@ -15,6 +15,7 @@ import { IContextKey, IContextKeyService } from '../../../platform/contextkey/co
 import { asCssVariable } from '../../../platform/theme/common/colorUtils.js';
 import { IActiveSession } from '../../services/sessions/common/sessionsManagement.js';
 import { IChatViewFactory } from '../../services/chatView/browser/chatViewFactory.js';
+import { getNativeTerminalLaunch, ISessionTerminalService } from '../../services/chatView/browser/sessionTerminalService.js';
 import { AbstractChatView, ChatViewKind, IChatViewOptions } from './chatView.js';
 import { ChatCompositeBar } from './chatCompositeBar.js';
 import { SessionHeader, SessionViewFloatingToolbar } from './sessionHeader.js';
@@ -88,6 +89,7 @@ export class SessionView extends Disposable implements ISerializableView {
 
 	constructor(
 		@IChatViewFactory private readonly chatViewFactory: IChatViewFactory,
+		@ISessionTerminalService private readonly sessionTerminalService: ISessionTerminalService,
 		@IInstantiationService instantiationService: IInstantiationService,
 		@IContextKeyService contextKeyService: IContextKeyService,
 	) {
@@ -160,8 +162,21 @@ export class SessionView extends Disposable implements ISerializableView {
 		this._openSessionDisposables.add(this._handleContextKeys(session));
 
 		this._openSessionDisposables.add(autorun(reader => {
+			const launch = session !== undefined ? getNativeTerminalLaunch(session, reader) : undefined;
+			// Claude runs terminal-only: every eligible local Claude session shows
+			// the embedded `claude` terminal. Created sessions resume immediately,
+			// but a brand-new session stays on the composer until the user submits a
+			// message (which marks it in `terminalSessionIds`), so "New" still opens
+			// the composer. Non-Claude providers never resolve a launch and fall
+			// through to the GUI chat views below.
+			const showTerminal = !!launch && (
+				launch.resumeSessionId !== undefined ||
+				this.sessionTerminalService.terminalSessionIds.read(reader).has(session!.sessionId)
+			);
 			let desiredKind: ChatViewKind;
-			if (session === undefined || session.isCreated.read(reader) === false) {
+			if (showTerminal) {
+				desiredKind = 'terminal';
+			} else if (session === undefined || session.isCreated.read(reader) === false) {
 				desiredKind = 'newSession';
 			} else if (session.activeChat.read(reader).status.read(reader) === SessionStatus.Untitled) {
 				desiredKind = 'newChatInSession';
@@ -172,16 +187,18 @@ export class SessionView extends Disposable implements ISerializableView {
 			let view = this._currentView.value;
 
 			if (!view || view.kind !== desiredKind) {
-				view = desiredKind === 'chat'
-					? this.chatViewFactory.createChatView()
-					: this.chatViewFactory.createNewChatView(desiredKind === 'newChatInSession', options);
+				view = desiredKind === 'terminal'
+					? this.chatViewFactory.createTerminalView()
+					: desiredKind === 'chat'
+						? this.chatViewFactory.createChatView()
+						: this.chatViewFactory.createNewChatView(desiredKind === 'newChatInSession', options);
 				this._contentContainer.replaceChildren(view.element);
 				this._currentView.value = view;
 				view.setActive(this._isActive);
 			}
 
 			if (session) {
-				view.setChat(session.activeChat.read(reader), session.sessionId);
+				view.setChat(session.activeChat.read(reader), session.sessionId, session);
 			}
 
 			this._header.setSession(session);

@@ -23,6 +23,7 @@ import { IPreferredSessionType } from './sessionTypePicker.js';
 import { NewChatInputWidget } from './newChatInput.js';
 import { sessionHasNoSelectableModel } from './modelPicker.js';
 import { ISessionsProvidersService } from '../../../services/sessions/browser/sessionsProvidersService.js';
+import { getNativeTerminalLaunch, ISessionTerminalService } from '../../../services/chatView/browser/sessionTerminalService.js';
 import { NoAgentHostEmptyState } from './noAgentHostEmptyState.js';
 import { IChatRequestVariableEntry } from '../../../../workbench/contrib/chat/common/attachments/chatVariableEntries.js';
 import { IAgentHostFilterService } from '../../../services/agentHostFilter/common/agentHostFilter.js';
@@ -67,6 +68,7 @@ export class NewChatWidget extends Disposable {
 		@IAquariumService private readonly aquariumService: IAquariumService,
 		@IAgentHostFilterService private readonly agentHostFilterService: IAgentHostFilterService,
 		@ISessionsProvidersService private readonly sessionsProvidersService: ISessionsProvidersService,
+		@ISessionTerminalService private readonly sessionTerminalService: ISessionTerminalService,
 	) {
 		super();
 		this._renderHarnessPickerInControls = this.options.renderSessionTypePickerInControls.get();
@@ -104,6 +106,10 @@ export class NewChatWidget extends Disposable {
 			if (provider) {
 				observableSignalFromEvent(this, provider.onDidChangeModels).read(reader);
 			}
+			// Terminal-bound (local Claude) sessions never block on a missing
+			// model (see `sessionHasNoSelectableModel`); that eligibility depends
+			// on the workspace resolving, so re-run when it does.
+			session.workspace.read(reader);
 			return !sessionHasNoSelectableModel(session, this.sessionsProvidersService);
 		});
 
@@ -385,6 +391,14 @@ export class NewChatWidget extends Disposable {
 		const session = this._session.get();
 		if (!session) {
 			this._workspacePicker.showPicker();
+			return;
+		}
+
+		// Claude runs terminal-only: submitting from the composer hands the session
+		// off to the native `claude` CLI (seeded with this message) instead of
+		// sending an SDK request — the session view then flips to the terminal.
+		if (getNativeTerminalLaunch(session)) {
+			this.sessionTerminalService.openNewSessionTerminal(session, query);
 			return;
 		}
 

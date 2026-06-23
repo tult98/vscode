@@ -11,7 +11,9 @@ import { join } from '../../../../base/common/path.js';
 import { createDecorator } from '../../../instantiation/common/instantiation.js';
 import { ILogService } from '../../../log/common/log.js';
 import { IAgentSdkDownloader, IAgentSdkPackage } from '../agentSdkDownloader.js';
-import { AgentHostClaudeSdkRootEnvVar } from '../../common/agentService.js';
+import { AgentHostClaudeSdkRootEnvVar, AgentHostClaudeUseCliEnvVar, isAgentEnabled } from '../../common/agentService.js';
+import { createClaudeCliWarmQuery } from './claudeCliQuery.js';
+import { cliGetSessionInfo, cliGetSessionMessages, cliGetSubagentMessages, cliListSessions, cliListSubagents, IClaudeListedSession } from './claudeCliSessionStore.js';
 
 /**
  * `@anthropic-ai/claude-agent-sdk` distribution descriptor. Lives in this
@@ -41,7 +43,7 @@ export const IClaudeAgentSdkService = createDecorator<IClaudeAgentSdkService>('c
 export interface IClaudeAgentSdkService {
 	readonly _serviceBrand: undefined;
 
-	listSessions(): Promise<readonly SDKSessionInfo[]>;
+	listSessions(): Promise<readonly IClaudeListedSession[]>;
 	getSessionInfo(sessionId: string): Promise<SDKSessionInfo | undefined>;
 	startup(params: { options: Options; initializeTimeoutMs?: number }): Promise<WarmQuery>;
 	getSessionMessages(sessionId: string, options?: GetSessionMessagesOptions): Promise<readonly SessionMessage[]>;
@@ -118,32 +120,69 @@ export class ClaudeAgentSdkService implements IClaudeAgentSdkService {
 		@IAgentSdkDownloader private readonly _downloader: IAgentSdkDownloader,
 	) { }
 
-	async listSessions(): Promise<readonly SDKSessionInfo[]> {
+	/**
+	 * CLI transport active — read paths source from the native `claude` CLI's
+	 * on-disk JSONL store instead of the SDK, so session listing and replay
+	 * work in built products where the SDK is not bundled.
+	 */
+	private _useCli(): boolean {
+		return isAgentEnabled(process.env[AgentHostClaudeUseCliEnvVar], false);
+	}
+
+	async listSessions(): Promise<readonly IClaudeListedSession[]> {
+		if (this._useCli()) {
+			return cliListSessions(this._logService);
+		}
 		const sdk = await this._getSdk();
-		return sdk.listSessions(undefined);
+		// The in-process SDK does not expose transcript-emptiness; treat every
+		// SDK-listed session as having content so none are filtered as orphans.
+		const sessions = await sdk.listSessions(undefined);
+		return sessions.map(session => ({ ...session, hasContent: true }));
 	}
 
 	async getSessionInfo(sessionId: string): Promise<SDKSessionInfo | undefined> {
+		if (this._useCli()) {
+			return cliGetSessionInfo(sessionId, this._logService);
+		}
 		const sdk = await this._getSdk();
 		return sdk.getSessionInfo(sessionId);
 	}
 
 	async startup(params: { options: Options; initializeTimeoutMs?: number }): Promise<WarmQuery> {
+		// CLI transport: spawn the user's installed `claude` binary instead of
+		// the in-process SDK. The binary reads the user's keychain login, so the
+		// GUI authenticates with no `CLAUDE_CODE_OAUTH_TOKEN`. Everything above
+		// the transport (pipeline, event mapper, protocol) is unchanged.
+		if (isAgentEnabled(process.env[AgentHostClaudeUseCliEnvVar], false)) {
+			this._logService.info(`[Claude CLI] startup via CLI transport (executable=claude)`);
+			return createClaudeCliWarmQuery(params.options, 'claude', this._logService);
+		}
 		const sdk = await this._getSdk();
 		return sdk.startup(params);
 	}
 
 	async getSessionMessages(sessionId: string, options?: GetSessionMessagesOptions): Promise<readonly SessionMessage[]> {
+		if (this._useCli()) {
+			return cliGetSessionMessages(sessionId, options?.includeSystemMessages === true, this._logService);
+		}
 		const sdk = await this._getSdk();
 		return sdk.getSessionMessages(sessionId, options);
 	}
 
 	async listSubagents(sessionId: string, options?: ListSubagentsOptions): Promise<readonly string[]> {
+		if (this._useCli()) {
+			return cliListSubagents(sessionId, this._logService);
+		}
 		const sdk = await this._getSdk();
 		return sdk.listSubagents(sessionId, options);
 	}
 
 	async getSubagentMessages(sessionId: string, agentId: string, options?: GetSubagentMessagesOptions): Promise<readonly SessionMessage[]> {
+		if (this._useCli()) {
+			// `GetSubagentMessagesOptions` has no system-message filter; mirror the
+			// SDK by returning all entries (the replay mapper handles system ones).
+			return cliGetSubagentMessages(sessionId, agentId, true, this._logService);
+		}
 		const sdk = await this._getSdk();
 		return sdk.getSubagentMessages(sessionId, agentId, options);
 	}

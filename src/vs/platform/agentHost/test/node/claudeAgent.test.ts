@@ -3,10 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import type Anthropic from '@anthropic-ai/sdk';
 import type { GetSessionMessagesOptions, McpSdkServerConfigWithInstance, Options, PermissionMode, Query, SDKMessage, SDKSessionInfo, SDKUserMessage, SdkMcpToolDefinition, SessionMessage, Settings, WarmQuery } from '@anthropic-ai/claude-agent-sdk';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import type { CCAModel } from '@vscode/copilot-api';
 
 import assert from 'assert';
 import {
@@ -50,11 +48,11 @@ import { ClaudeAgent } from '../../node/claude/claudeAgent.js';
 import { ClaudeAgentSession } from '../../node/claude/claudeAgentSession.js';
 import { ClaudeSessionMetadataStore } from '../../node/claude/claudeSessionMetadataStore.js';
 import { ClaudeAgentSdkService, IClaudeAgentSdkService, IClaudeSdkBindings } from '../../node/claude/claudeAgentSdkService.js';
+import type { IClaudeListedSession } from '../../node/claude/claudeCliSessionStore.js';
 import { IAgentSdkDownloader } from '../../node/agentSdkDownloader.js';
 import { PendingRequestRegistry } from '../../common/pendingRequestRegistry.js';
 import { IClaudeProxyCreditsReport, IClaudeProxyHandle, IClaudeProxyService } from '../../node/claude/claudeProxyService.js';
 import { resolvePromptToContentBlocks } from '../../node/claude/claudePromptResolver.js';
-import { ICopilotApiService, type ICopilotApiServiceRequestOptions } from '../../node/shared/copilotApiService.js';
 import { AgentService } from '../../node/agentService.js';
 import { createNoopGitService, createNullSessionDataService, createSessionDataService, TestSessionDatabase } from '../common/sessionTestHelpers.js';
 
@@ -111,23 +109,6 @@ class FakeClaudeProxyService implements IClaudeProxyService {
 	dispose(): void { this.onDidReportCreditsEmitter.dispose(); }
 }
 
-class FakeCopilotApiService implements ICopilotApiService {
-	declare readonly _serviceBrand: undefined;
-
-	models: (token: string, options?: ICopilotApiServiceRequestOptions) => Promise<CCAModel[]> =
-		async () => [];
-
-	messages(): never { throw new Error('not used in ClaudeAgent tests'); }
-	countTokens(): Promise<Anthropic.MessageTokensCount> { throw new Error('not used in ClaudeAgent tests'); }
-	responses(): Promise<Response> { throw new Error('not used in ClaudeAgent tests'); }
-	utilityChatCompletion(): Promise<never> { throw new Error('not used in ClaudeAgent tests'); }
-}
-
-const FakeProductService: IProductService = {
-	_serviceBrand: undefined,
-	version: '1.0.0-test',
-} as IProductService;
-
 // FakeClaudeSubagentResolver removed in the Phase 12 refactor (the
 // IClaudeSubagentResolver service no longer exists). Per-session
 // subagent state lives on `ClaudeAgentSession.subagents`
@@ -142,7 +123,7 @@ class FakeClaudeAgentSdkService implements IClaudeAgentSdkService {
 	 * before invoking the agent under test. Defaults to empty so suites
 	 * that don't care about session enumeration aren't forced to set it.
 	 */
-	sessionList: readonly SDKSessionInfo[] = [];
+	sessionList: readonly (SDKSessionInfo & { readonly hasContent?: boolean })[] = [];
 	listSessionsCallCount = 0;
 
 	/**
@@ -195,13 +176,15 @@ class FakeClaudeAgentSdkService implements IClaudeAgentSdkService {
 	 */
 	listSessionsRejection: Error | undefined;
 
-	async listSessions(): Promise<readonly SDKSessionInfo[]> {
+	async listSessions(): Promise<readonly IClaudeListedSession[]> {
 		this.listSessionsCallCount++;
 		if (this.listSessionsRejection) {
 			const err = this.listSessionsRejection;
 			throw err;
 		}
-		return this.sessionList;
+		// Stagings set only SDK fields; default `hasContent` so they are not
+		// filtered as orphans. Tests exercising the orphan filter set it per case.
+		return this.sessionList.map(s => ({ hasContent: true, ...s }));
 	}
 
 	/**
@@ -529,75 +512,11 @@ class RecordingSessionDataService implements ISessionDataService {
 
 // #endregion
 
-// #region Fixture models
-
-/** Build a {@link CCAModel} with sensible defaults; override per test. */
-function makeModel(overrides: Partial<CCAModel> & { readonly id: string; readonly name: string; readonly vendor: string }): CCAModel {
-	return {
-		billing: { is_premium: false, multiplier: 1, restricted_to: [] },
-		capabilities: {
-			family: 'test',
-			limits: { max_context_window_tokens: 200_000, max_output_tokens: 8192, max_prompt_tokens: 200_000 },
-			object: 'model_capabilities',
-			supports: { parallel_tool_calls: true, streaming: true, tool_calls: true, vision: false },
-			tokenizer: 'o200k_base',
-			type: 'chat',
-		},
-		is_chat_default: false,
-		is_chat_fallback: false,
-		model_picker_category: 'Anthropic',
-		model_picker_enabled: true,
-		object: 'model',
-		policy: { state: 'enabled', terms: '' },
-		preview: false,
-		supported_endpoints: ['/v1/messages'],
-		version: '1',
-		...overrides,
-	};
-}
-
-/**
- * Build a `CCAModelSupports` with `reasoning_effort` / `adaptive_thinking`
- * augmentations the SDK type doesn't yet declare (tracked at
- * microsoft/vscode-capi#85). Mirrors the runtime shape `claudeAgent.ts`
- * narrows at the read boundary.
- */
-function makeSupports(extras: { adaptive_thinking?: boolean; reasoning_effort?: readonly string[] } = {}): CCAModel['capabilities']['supports'] {
-	return { parallel_tool_calls: true, streaming: true, tool_calls: true, vision: false, ...extras } as CCAModel['capabilities']['supports'];
-}
-
-const CLAUDE_OPUS = makeModel({ id: 'claude-opus-4.6', name: 'Claude Opus 4.6', vendor: 'Anthropic' });
-const CLAUDE_SONNET = makeModel({ id: 'claude-sonnet-4.6', name: 'Claude Sonnet 4.6', vendor: 'Anthropic' });
-const NON_ANTHROPIC = makeModel({ id: 'gpt-5', name: 'GPT-5', vendor: 'OpenAI' });
-const ANTHROPIC_NO_MESSAGES_ENDPOINT = makeModel({ id: 'claude-haiku-3.5', name: 'Claude Haiku 3.5', vendor: 'Anthropic', supported_endpoints: ['/chat/completions'] });
-const ANTHROPIC_PICKER_DISABLED = makeModel({ id: 'claude-opus-4.5', name: 'Claude Opus 4.5', vendor: 'Anthropic', model_picker_enabled: false });
-const ANTHROPIC_NO_TOOL_CALLS = makeModel({
-	id: 'claude-sonnet-3.5', name: 'Claude Sonnet 3.5', vendor: 'Anthropic',
-	capabilities: {
-		family: 'test',
-		limits: { max_context_window_tokens: 200_000, max_output_tokens: 8192, max_prompt_tokens: 200_000 },
-		object: 'model_capabilities',
-		supports: { parallel_tool_calls: false, streaming: true, tool_calls: false, vision: false },
-		tokenizer: 'o200k_base',
-		type: 'chat',
-	},
-});
-const SYNTHETIC_AUTO = makeModel({ id: 'auto', name: 'Auto', vendor: 'copilot' });
-
-const ALL_MODELS: readonly CCAModel[] = [
-	CLAUDE_OPUS, CLAUDE_SONNET, NON_ANTHROPIC,
-	ANTHROPIC_NO_MESSAGES_ENDPOINT, ANTHROPIC_PICKER_DISABLED,
-	ANTHROPIC_NO_TOOL_CALLS, SYNTHETIC_AUTO,
-];
-
-// #endregion
-
 // #region Test harness
 
 interface ITestContext {
 	readonly agent: ClaudeAgent;
 	readonly proxy: FakeClaudeProxyService;
-	readonly api: FakeCopilotApiService;
 	readonly sdk: FakeClaudeAgentSdkService;
 	readonly sessionData: RecordingSessionDataService;
 	readonly stateManager: AgentHostStateManager;
@@ -630,8 +549,6 @@ function createTestContext(
 	overrides?: { logService?: ILogService; database?: TestSessionDatabase },
 ): ITestContext {
 	const proxy = new FakeClaudeProxyService();
-	const api = new FakeCopilotApiService();
-	api.models = async () => [...ALL_MODELS];
 	const sdk = new FakeClaudeAgentSdkService();
 	const sessionData = new RecordingSessionDataService(
 		overrides?.database
@@ -644,18 +561,16 @@ function createTestContext(
 
 	const services = new ServiceCollection(
 		[ILogService, logService],
-		[ICopilotApiService, api],
 		[IClaudeProxyService, proxy],
 		[ISessionDataService, sessionData],
 		[IClaudeAgentSdkService, sdk],
 		[IAgentPluginManager, new FakeAgentPluginManager()],
 		[IAgentHostGitService, createNoopGitService()],
 		[IAgentConfigurationService, configService],
-		[IProductService, FakeProductService],
 	);
 	const instantiationService: IInstantiationService = disposables.add(new InstantiationService(services));
 	const agent = disposables.add(instantiationService.createInstance(ClaudeAgent));
-	return { agent, proxy, api, sdk, sessionData, stateManager, configService, instantiationService };
+	return { agent, proxy, sdk, sessionData, stateManager, configService, instantiationService };
 }
 
 /** Drains the microtask queue so awaited refresh writes settle. */
@@ -720,147 +635,13 @@ suite('ClaudeAgent', () => {
 		);
 	});
 
-	test('authenticate populates models filtered to Claude family', async () => {
-		const { agent, proxy } = createTestContext(disposables);
+	test('models observable stays empty after authenticate (terminal-only; native CLI owns model selection)', async () => {
+		const { agent } = createTestContext(disposables);
 
 		const accepted = await agent.authenticate('https://api.github.com', 'tok');
 		await tick();
 
-		assert.deepStrictEqual({
-			accepted,
-			startCalls: proxy.startCalls.map(c => c.token),
-			models: agent.models.get(),
-		}, {
-			accepted: true,
-			startCalls: ['tok'],
-			models: [
-				{ provider: 'claude', id: 'claude-opus-4.6', name: 'Claude Opus 4.6', maxContextWindow: 200_000, supportsVision: false, policyState: 'enabled', _meta: { multiplierNumeric: 1 } },
-				{ provider: 'claude', id: 'claude-sonnet-4.6', name: 'Claude Sonnet 4.6', maxContextWindow: 200_000, supportsVision: false, policyState: 'enabled', _meta: { multiplierNumeric: 1 } },
-			],
-		});
-	});
-
-	test('authenticate surfaces the CAPI chat-default model first; ties preserve insertion order', async () => {
-		// `IAgentModelInfo` carries no explicit `isDefault` bit; the
-		// picker uses `models[0]` as the de facto default at
-		// modelPicker.ts:144. So a stable sort by `is_chat_default`
-		// ensures whichever model CAPI flags as the chat default ends
-		// up at position 0, regardless of the order CAPI returned the
-		// list. Equal-priority entries fall through the comparator
-		// unchanged so insertion order wins on ties.
-		const opus = makeModel({ id: 'claude-opus-4.6', name: 'Claude Opus 4.6', vendor: 'Anthropic' });
-		const sonnetDefault = makeModel({ id: 'claude-sonnet-4.6', name: 'Claude Sonnet 4.6', vendor: 'Anthropic', is_chat_default: true });
-		const haiku = makeModel({ id: 'claude-haiku-4.6', name: 'Claude Haiku 4.6', vendor: 'Anthropic' });
-
-		const { agent, api } = createTestContext(disposables);
-		api.models = async () => [opus, sonnetDefault, haiku];
-		await agent.authenticate('https://api.github.com', 'tok');
-		await tick();
-
-		assert.deepStrictEqual(
-			agent.models.get().map(m => m.id),
-			['claude-sonnet-4.6', 'claude-opus-4.6', 'claude-haiku-4.6'],
-		);
-	});
-
-	test('authenticate sources configSchema enum from each model\'s reasoning_effort list (Phase 6.1 / Cycle D3 / I5)', async () => {
-		// Per Phase 6.1 plan D3 + CONTEXT.md M12 (line ~1802): the
-		// `configSchema.properties.thinkingLevel.enum` advertised on each
-		// Claude model must come from that model's own
-		// `capabilities.supports.reasoning_effort` list — different
-		// Claude models support different effort subsets (some
-		// `['low','medium','high']`, some `['high']`, some none at all).
-		// Mirror of the extension pattern at
-		// extensions/copilot/src/extension/chatSessions/claude/node/
-		// claudeCodeModels.ts:208-212 (`pickReasoningEffort`), which
-		// reads `endpoint.supportsReasoningEffort` per-endpoint.
-		//
-		// CAPI's `/models` JSON exposes `reasoning_effort: string[]` and
-		// `adaptive_thinking: boolean` on each model's `supports` bag,
-		// but the published `@vscode/copilot-api` types don't yet
-		// surface these fields (tracked at microsoft/vscode-capi#85);
-		// `claudeAgent.ts` narrows the bag locally at the read boundary.
-		const capsBase = {
-			family: 'test',
-			limits: { max_context_window_tokens: 200_000, max_output_tokens: 8192, max_prompt_tokens: 200_000 },
-			object: 'model_capabilities',
-			tokenizer: 'o200k_base',
-			type: 'chat',
-		} as const;
-		const fullEffortModel = makeModel({
-			id: 'claude-opus-4.6', name: 'Claude Opus 4.6', vendor: 'Anthropic',
-			capabilities: { ...capsBase, supports: makeSupports({ adaptive_thinking: true, reasoning_effort: ['low', 'medium', 'high'] }) },
-		});
-		const highOnlyModel = makeModel({
-			id: 'claude-sonnet-4.6', name: 'Claude Sonnet 4.6', vendor: 'Anthropic',
-			capabilities: { ...capsBase, supports: makeSupports({ adaptive_thinking: true, reasoning_effort: ['high'] }) },
-		});
-		const emptyEffortModel = makeModel({
-			id: 'claude-haiku-4.6', name: 'Claude Haiku 4.6', vendor: 'Anthropic',
-			capabilities: { ...capsBase, supports: makeSupports({ adaptive_thinking: false, reasoning_effort: [] }) },
-		});
-		const unknownEffortModel = makeModel({
-			id: 'claude-opus-4.5', name: 'Claude Opus 4.5', vendor: 'Anthropic',
-			capabilities: { ...capsBase, supports: makeSupports({ adaptive_thinking: true, reasoning_effort: ['low', 'bogus', 'high'] }) },
-		});
-		const noEffortFieldModel = makeModel({
-			id: 'claude-sonnet-4.5', name: 'Claude Sonnet 4.5', vendor: 'Anthropic',
-		});
-
-		const { agent, api } = createTestContext(disposables);
-		api.models = async () => [fullEffortModel, highOnlyModel, emptyEffortModel, unknownEffortModel, noEffortFieldModel];
-		await agent.authenticate('https://api.github.com', 'tok');
-		await tick();
-
-		const schemasById = Object.fromEntries(
-			agent.models.get().map(m => [m.id, m.configSchema] as const),
-		);
-		assert.deepStrictEqual(schemasById, {
-			'claude-opus-4.6': {
-				type: 'object',
-				properties: {
-					thinkingLevel: {
-						type: 'string',
-						title: 'Thinking Level',
-						description: 'Controls how much reasoning effort Claude uses.',
-						enum: ['low', 'medium', 'high'],
-						enumLabels: ['Low', 'Medium', 'High'],
-						enumDescriptions: ['Faster responses with less reasoning', 'Balanced reasoning and speed', 'Greater reasoning depth but slower'],
-						default: 'high',
-					},
-				},
-			},
-			'claude-sonnet-4.6': {
-				type: 'object',
-				properties: {
-					thinkingLevel: {
-						type: 'string',
-						title: 'Thinking Level',
-						description: 'Controls how much reasoning effort Claude uses.',
-						enum: ['high'],
-						enumLabels: ['High'],
-						enumDescriptions: ['Greater reasoning depth but slower'],
-						default: 'high',
-					},
-				},
-			},
-			'claude-haiku-4.6': undefined,
-			'claude-opus-4.5': {
-				type: 'object',
-				properties: {
-					thinkingLevel: {
-						type: 'string',
-						title: 'Thinking Level',
-						description: 'Controls how much reasoning effort Claude uses.',
-						enum: ['low', 'high'],
-						enumLabels: ['Low', 'High'],
-						enumDescriptions: ['Faster responses with less reasoning', 'Greater reasoning depth but slower'],
-						default: 'high',
-					},
-				},
-			},
-			'claude-sonnet-4.5': undefined,
-		});
+		assert.deepStrictEqual({ accepted, models: agent.models.get() }, { accepted: true, models: [] });
 	});
 
 	test('authenticate rejects non-GitHub resources without disturbing state', async () => {
@@ -920,8 +701,6 @@ suite('ClaudeAgent', () => {
 		// true. This test pins the corrected ordering: state mutates only
 		// after start() succeeds.
 		const proxy = new FakeClaudeProxyService();
-		const api = new FakeCopilotApiService();
-		api.models = async () => [...ALL_MODELS];
 
 		// Replace start() with a fake that records every invocation
 		// (whether or not it succeeds) and fails the first attempt only.
@@ -941,21 +720,16 @@ suite('ClaudeAgent', () => {
 
 		const services = new ServiceCollection(
 			[ILogService, new NullLogService()],
-			[ICopilotApiService, api],
 			[IClaudeProxyService, proxy],
 			[ISessionDataService, createNullSessionDataService()],
 			[IClaudeAgentSdkService, new FakeClaudeAgentSdkService()],
 			[IAgentPluginManager, new FakeAgentPluginManager()],
 			[IAgentHostGitService, createNoopGitService()],
-			[IProductService, FakeProductService],
 		);
 		const instantiationService: IInstantiationService = disposables.add(new InstantiationService(services));
 		const agent = disposables.add(instantiationService.createInstance(ClaudeAgent));
 
 		await assert.rejects(agent.authenticate('https://api.github.com', 'tok'), /proxy bind failed/);
-
-		// Models still empty (proxy never started, refresh never ran).
-		assert.deepStrictEqual(agent.models.get(), []);
 
 		// Retry with the SAME token MUST attempt start() again — not
 		// short-circuit on `tokenChanged === false`.
@@ -966,26 +740,11 @@ suite('ClaudeAgent', () => {
 			accepted,
 			startTokens: proxy.startCalls.map(c => c.token),
 			disposeCount: proxy.disposeCount,
-			modelIds: agent.models.get().map(m => m.id),
 		}, {
 			accepted: true,
 			startTokens: ['tok', 'tok'],
 			disposeCount: 0,
-			modelIds: [CLAUDE_OPUS.id, CLAUDE_SONNET.id],
 		});
-	});
-
-	test('model filter excludes non-Claude entries', async () => {
-		// Same fixture set as the populate test, but assert on ids only —
-		// catches every exclusion criterion in one snapshot.
-		const { agent } = createTestContext(disposables);
-		await agent.authenticate('https://api.github.com', 'tok');
-		await tick();
-
-		assert.deepStrictEqual(
-			agent.models.get().map(m => m.id),
-			['claude-opus-4.6', 'claude-sonnet-4.6'],
-		);
 	});
 
 	test('AgentSession URI helpers round-trip the claude scheme', () => {
@@ -999,17 +758,13 @@ suite('ClaudeAgent', () => {
 
 	test('dispose disposes the proxy handle and is idempotent', async () => {
 		const proxy = new FakeClaudeProxyService();
-		const api = new FakeCopilotApiService();
-		api.models = async () => [];
 
 		const services = new ServiceCollection(
 			[ILogService, new NullLogService()],
-			[ICopilotApiService, api],
 			[IClaudeProxyService, proxy],
 			[ISessionDataService, createNullSessionDataService()],
 			[IClaudeAgentSdkService, new FakeClaudeAgentSdkService()],
 			[IAgentPluginManager, new FakeAgentPluginManager()],
-			[IProductService, FakeProductService],
 		);
 		const instantiationService: IInstantiationService = disposables.add(new InstantiationService(services));
 		const agent = instantiationService.createInstance(ClaudeAgent);
@@ -1057,43 +812,6 @@ suite('ClaudeAgent', () => {
 			rootAgents.map(a => ({ provider: a.provider, displayName: a.displayName })),
 			[{ provider: 'claude', displayName: 'Claude' }],
 		);
-	});
-
-	test('stale model writes from an old token are dropped', async () => {
-		// Wire a controllable models() so token-A's refresh can hang
-		// while token-B's refresh runs to completion. Phase 4's stale-
-		// write guard MUST drop the late token-A result.
-		const proxy = new FakeClaudeProxyService();
-		const api = new FakeCopilotApiService();
-		const tokAModels = new DeferredPromise<CCAModel[]>();
-		api.models = (token: string) => token === 'tokA'
-			? tokAModels.p
-			: Promise.resolve([CLAUDE_SONNET]);
-
-		const services = new ServiceCollection(
-			[ILogService, new NullLogService()],
-			[ICopilotApiService, api],
-			[IClaudeProxyService, proxy],
-			[ISessionDataService, createNullSessionDataService()],
-			[IClaudeAgentSdkService, new FakeClaudeAgentSdkService()],
-			[IAgentPluginManager, new FakeAgentPluginManager()],
-			[IProductService, FakeProductService],
-		);
-		const instantiationService: IInstantiationService = disposables.add(new InstantiationService(services));
-		const agent = disposables.add(instantiationService.createInstance(ClaudeAgent));
-
-		// First authenticate: refresh-A starts and hangs on tokAModels.p.
-		await agent.authenticate('https://api.github.com', 'tokA');
-		// Second authenticate: refresh-B runs to completion, models == [B].
-		await agent.authenticate('https://api.github.com', 'tokB');
-		await tick();
-		assert.deepStrictEqual(agent.models.get().map(m => m.id), [CLAUDE_SONNET.id]);
-
-		// Now unblock refresh-A: it must observe the rotated token and
-		// drop its write rather than overwrite refresh-B's result.
-		tokAModels.complete([CLAUDE_OPUS]);
-		await tick();
-		assert.deepStrictEqual(agent.models.get().map(m => m.id), [CLAUDE_SONNET.id]);
 	});
 
 	// #region Phase 5 — session lifecycle
@@ -2036,8 +1754,6 @@ suite('ClaudeAgent', () => {
 		};
 
 		const proxy = new FakeClaudeProxyService();
-		const api = new FakeCopilotApiService();
-		api.models = async () => [...ALL_MODELS];
 		const sdk = new FakeClaudeAgentSdkService();
 		const sessionData = createSessionDataService(blockingDb);
 		const logService = new NullLogService();
@@ -2046,14 +1762,12 @@ suite('ClaudeAgent', () => {
 
 		const services = new ServiceCollection(
 			[ILogService, logService],
-			[ICopilotApiService, api],
 			[IClaudeProxyService, proxy],
 			[ISessionDataService, sessionData],
 			[IClaudeAgentSdkService, sdk],
 			[IAgentPluginManager, new FakeAgentPluginManager()],
 			[IAgentHostGitService, createNoopGitService()],
 			[IAgentConfigurationService, configService],
-			[IProductService, FakeProductService],
 		);
 		const instantiationService: IInstantiationService = disposables.add(new InstantiationService(services));
 		const agent: ClaudeAgent = disposables.add(instantiationService.createInstance(ClaudeAgent));
@@ -2676,12 +2390,10 @@ suite('ClaudeAgent', () => {
 
 		const services = new ServiceCollection(
 			[ILogService, new NullLogService()],
-			[ICopilotApiService, new FakeCopilotApiService()],
 			[IClaudeProxyService, new FakeClaudeProxyService()],
 			[ISessionDataService, sessionData],
 			[IClaudeAgentSdkService, sdk],
 			[IAgentPluginManager, new FakeAgentPluginManager()],
-			[IProductService, FakeProductService],
 		);
 		const instantiationService = disposables.add(new InstantiationService(services));
 		const agent = disposables.add(instantiationService.createInstance(ClaudeAgent));
@@ -2710,6 +2422,30 @@ suite('ClaudeAgent', () => {
 			custDirB: undefined,
 			sdkCalls: 1,
 		});
+	});
+
+	test('listSessions hides orphan sessions with no content and no live process', async () => {
+		// A `/clear` (or abandoned/empty session) leaves a transcript with no
+		// assistant reply. With no live process for it, it must not surface as a
+		// dead row; a session with real content still does.
+		const sdk = new FakeClaudeAgentSdkService();
+		sdk.sessionList = [
+			{ sessionId: 'real', summary: 'Real', lastModified: 200, hasContent: true },
+			{ sessionId: 'orphan', summary: 'Orphan', lastModified: 100, hasContent: false },
+		];
+
+		const services = new ServiceCollection(
+			[ILogService, new NullLogService()],
+			[IClaudeProxyService, new FakeClaudeProxyService()],
+			[ISessionDataService, createNullSessionDataService()],
+			[IClaudeAgentSdkService, sdk],
+			[IAgentPluginManager, new FakeAgentPluginManager()],
+		);
+		const instantiationService = disposables.add(new InstantiationService(services));
+		const agent = disposables.add(instantiationService.createInstance(ClaudeAgent));
+
+		const result = await agent.listSessions();
+		assert.deepStrictEqual(result.map(r => AgentSession.id(r.session)), ['real']);
 	});
 
 	test('listSessions tolerates a corrupt DB without poisoning the rest of the listing', async () => {
@@ -2747,12 +2483,10 @@ suite('ClaudeAgent', () => {
 
 		const services = new ServiceCollection(
 			[ILogService, new NullLogService()],
-			[ICopilotApiService, new FakeCopilotApiService()],
 			[IClaudeProxyService, new FakeClaudeProxyService()],
 			[ISessionDataService, sessionData],
 			[IClaudeAgentSdkService, sdk],
 			[IAgentPluginManager, new FakeAgentPluginManager()],
-			[IProductService, FakeProductService],
 		);
 		const instantiationService = disposables.add(new InstantiationService(services));
 		const agent = disposables.add(instantiationService.createInstance(ClaudeAgent));
@@ -2831,12 +2565,10 @@ suite('ClaudeAgent', () => {
 
 		const services = new ServiceCollection(
 			[ILogService, new NullLogService()],
-			[ICopilotApiService, new FakeCopilotApiService()],
 			[IClaudeProxyService, new FakeClaudeProxyService()],
 			[ISessionDataService, createNullSessionDataService()],
 			[IClaudeAgentSdkService, sdk],
 			[IAgentPluginManager, new FakeAgentPluginManager()],
-			[IProductService, FakeProductService],
 		);
 		const instantiationService = disposables.add(new InstantiationService(services));
 		const agent = disposables.add(instantiationService.createInstance(ClaudeAgent));
@@ -2878,12 +2610,10 @@ suite('ClaudeAgent', () => {
 
 		const services = new ServiceCollection(
 			[ILogService, new NullLogService()],
-			[ICopilotApiService, new FakeCopilotApiService()],
 			[IClaudeProxyService, new FakeClaudeProxyService()],
 			[ISessionDataService, sessionData],
 			[IClaudeAgentSdkService, sdk],
 			[IAgentPluginManager, new FakeAgentPluginManager()],
-			[IProductService, FakeProductService],
 		);
 		const instantiationService = disposables.add(new InstantiationService(services));
 		const agent = disposables.add(instantiationService.createInstance(ClaudeAgent));
@@ -3192,12 +2922,10 @@ suite('ClaudeAgent', () => {
 
 		const services = new ServiceCollection(
 			[ILogService, new NullLogService()],
-			[ICopilotApiService, new FakeCopilotApiService()],
 			[IClaudeProxyService, new RecordingProxyService()],
 			[ISessionDataService, createNullSessionDataService()],
 			[IClaudeAgentSdkService, new FakeClaudeAgentSdkService()],
 			[IAgentPluginManager, new FakeAgentPluginManager()],
-			[IProductService, FakeProductService],
 		);
 		const instantiationService = disposables.add(new InstantiationService(services));
 		const agent = instantiationService.createInstance(ClaudeAgent);
@@ -3233,8 +2961,6 @@ suite('ClaudeAgent', () => {
 		};
 
 		const proxy = new FakeClaudeProxyService();
-		const api = new FakeCopilotApiService();
-		api.models = async () => [...ALL_MODELS];
 		const sdk = new FakeClaudeAgentSdkService();
 		const sessionData = createSessionDataService(blockingDb);
 		const logService = new NullLogService();
@@ -3243,14 +2969,12 @@ suite('ClaudeAgent', () => {
 
 		const services = new ServiceCollection(
 			[ILogService, logService],
-			[ICopilotApiService, api],
 			[IClaudeProxyService, proxy],
 			[ISessionDataService, sessionData],
 			[IClaudeAgentSdkService, sdk],
 			[IAgentPluginManager, new FakeAgentPluginManager()],
 			[IAgentHostGitService, createNoopGitService()],
 			[IAgentConfigurationService, configService],
-			[IProductService, FakeProductService],
 		);
 		const instantiationService: IInstantiationService = disposables.add(new InstantiationService(services));
 		const agent: ClaudeAgent = instantiationService.createInstance(ClaudeAgent);
@@ -4863,8 +4587,6 @@ suite('ClaudeAgent — Phase 11 customizations', () => {
 
 	function buildCtxWith(pluginManager: FakeAgentPluginManager): ITestContext {
 		const proxy = new FakeClaudeProxyService();
-		const api = new FakeCopilotApiService();
-		api.models = async () => [...ALL_MODELS];
 		const sdk = new FakeClaudeAgentSdkService();
 		const sessionData = new RecordingSessionDataService(createSessionDataService());
 		const logService = new NullLogService();
@@ -4873,18 +4595,16 @@ suite('ClaudeAgent — Phase 11 customizations', () => {
 
 		const services = new ServiceCollection(
 			[ILogService, logService],
-			[ICopilotApiService, api],
 			[IClaudeProxyService, proxy],
 			[ISessionDataService, sessionData],
 			[IClaudeAgentSdkService, sdk],
 			[IAgentPluginManager, pluginManager],
 			[IAgentHostGitService, createNoopGitService()],
 			[IAgentConfigurationService, configService],
-			[IProductService, FakeProductService],
 		);
 		const instantiationService: IInstantiationService = disposables.add(new InstantiationService(services));
 		const agent = disposables.add(instantiationService.createInstance(ClaudeAgent));
-		return { agent, proxy, api, sdk, sessionData, stateManager, configService, instantiationService };
+		return { agent, proxy, sdk, sessionData, stateManager, configService, instantiationService };
 	}
 
 	test('setClientCustomizations forwards each item as a SessionCustomizationUpdated action', async () => {
