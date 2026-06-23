@@ -67,6 +67,7 @@ export class TerminalChatView extends AbstractChatView {
 
 	private _lastDimension: Dimension | undefined;
 	private _isActive = true;
+	private _pendingFocus = false;
 
 	constructor(
 		@ISessionTerminalService private readonly sessionTerminalService: ISessionTerminalService,
@@ -145,6 +146,10 @@ export class TerminalChatView extends AbstractChatView {
 		this._attachedSessionId = sessionId;
 		instance.attachToElement(this._container);
 		instance.setVisible(this._isActive);
+		if (this._pendingFocus) {
+			this._pendingFocus = false;
+			instance.focus(true);
+		}
 		if (this._lastDimension) {
 			instance.layout(this._lastDimension);
 		}
@@ -296,7 +301,11 @@ export class TerminalChatView extends AbstractChatView {
 	}
 
 	override focus(): void {
-		this._currentInstance?.focus(true);
+		if (this._currentInstance) {
+			this._currentInstance.focus(true);
+		} else {
+			this._pendingFocus = true;
+		}
 	}
 
 	override setActive(active: boolean): void {

@@ -231,7 +231,8 @@ export class AgentHostContribution extends Disposable implements IWorkbenchContr
 			customAgentTarget: this._isSessionsWindow ? undefined : Target.GitHubCopilot,
 			canDelegate: true,
 			requiresCustomModels: true,
-			supportsAutoModel: agentHostProviderSupportsAutoModel(agent.provider),
+			supportsAutoModel: agentHostProviderSupportsAutoModel(agent.provider)
+				|| (agent.provider === 'claude' && (this._configurationService.getValue<boolean>(ClaudeNativeCliSettingId) ?? false)),
 			agentHostProviderId: agent.provider,
 			supportsDelegation: true,
 			capabilities: {
