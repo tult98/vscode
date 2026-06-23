@@ -37,6 +37,7 @@ import { createNoopGitService, createSessionDataService, TestSessionDatabase } f
 import { NULL_CHECKPOINT_SERVICE } from '../../common/agentHostCheckpointService.js';
 import { buildSessionChangesetUri, buildUncommittedChangesetUri } from '../../common/changesetUri.js';
 import { type ICopilotApiService, type ICopilotApiServiceRequestOptions, type ICopilotUtilityChatCompletionRequest } from '../../node/shared/copilotApiService.js';
+import { AhpErrorCodes, JSON_RPC_INTERNAL_ERROR, ProtocolError } from '../../common/state/sessionProtocol.js';
 
 /**
  * Loads a JSONL fixture of raw Copilot SDK events, runs them through
@@ -161,6 +162,39 @@ suite('AgentService (node dispatcher)', () => {
 				action: { type: ActionType.ChatResponsePart, turnId: 'turn-1', part: { kind: ResponsePartKind.Markdown, id: 'msg-1', content: 'hello' } },
 			});
 			assert.ok(envelopes.some(e => e.action.type === ActionType.ChatResponsePart));
+		});
+	});
+
+	suite('resourceRead', () => {
+
+		test('maps missing files to NotFound', async () => {
+			const uri = URI.from({ scheme: Schemas.inMemory, path: '/missing.txt' });
+
+			await assert.rejects(
+				() => service.resourceRead(uri),
+				(error: unknown) => error instanceof ProtocolError
+					&& error.code === AhpErrorCodes.NotFound
+					&& error.message === `Content not found: ${uri.toString()}`
+			);
+		});
+
+		test('does not map all read failures to NotFound', async () => {
+			const uri = URI.from({ scheme: Schemas.inMemory, path: '/testDir/file.txt' });
+			const originalReadFile = fileService.readFile.bind(fileService);
+			fileService.readFile = async resource => {
+				if (resource.toString() === uri.toString()) {
+					return Promise.reject('Injected unknown read failure');
+				}
+				return originalReadFile(resource);
+			};
+			disposables.add(toDisposable(() => fileService.readFile = originalReadFile));
+
+			await assert.rejects(
+				() => service.resourceRead(uri),
+				(error: unknown) => error instanceof ProtocolError
+					&& error.code === JSON_RPC_INTERNAL_ERROR
+					&& error.message === `Failed to read content: ${uri.toString()}: Injected unknown read failure`
+			);
 		});
 	});
 
@@ -1951,6 +1985,34 @@ suite('AgentService (node dispatcher)', () => {
 				messageCalls: 1,
 				restored: true,
 			});
+		});
+
+		test('hydrates session customizations when restoring an existing session', async () => {
+			service.registerProvider(copilotAgent);
+			const { session } = await copilotAgent.createSession();
+			service.stateManager.deleteSession(session.toString());
+
+			copilotAgent.sessionMessages = [
+				{ type: 'message', session, role: 'user', messageId: 'msg-1', content: 'Hello', toolRequests: [] },
+				{ type: 'message', session, role: 'assistant', messageId: 'msg-2', content: 'Hi', toolRequests: [] },
+			];
+			let getSessionCustomizationsCalls = 0;
+			copilotAgent.getSessionCustomizations = async () => {
+				getSessionCustomizationsCalls++;
+				return [
+					{ type: CustomizationType.Plugin, id: customizationId('file:///restore-skill'), uri: 'file:///restore-skill', name: 'Restore Skill', enabled: true },
+				];
+			};
+
+			await service.restoreSession(session);
+
+			const customizations = service.stateManager.getSessionState(session.toString())?.customizations;
+			assert.strictEqual(getSessionCustomizationsCalls, 1);
+			assert.strictEqual(customizations?.length, 1);
+			assert.strictEqual(customizations?.[0]?.type, CustomizationType.Plugin);
+			assert.strictEqual(customizations?.[0]?.name, 'Restore Skill');
+			assert.strictEqual(customizations?.[0]?.id, customizationId('file:///restore-skill'));
+			assert.strictEqual(customizations?.[0]?.enabled, true);
 		});
 
 		test('clears failed restore attempts so sessions can be retried', async () => {
