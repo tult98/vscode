@@ -2706,6 +2706,8 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 				this._handleSessionRemoved(n.session);
 			} else if (n.type === NotificationType.SessionSummaryChanged) {
 				this._handleSessionSummaryChanged(n.session, n.changes);
+			} else if (n.type === NotificationType.SessionReplaced) {
+				this._handleSessionReplaced(n.from, n.to);
 			}
 		}));
 
@@ -2775,6 +2777,56 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 			this._onDidChangeSessions.fire({ added: [], removed: [cached], changed: [] });
 			cached.dispose();
 		}
+	}
+
+	/**
+	 * A native CLI process changed its session id in place (the `/clear` slash
+	 * command). Re-key the live session `from`→`to` through the existing replace
+	 * path so the open view follows and its embedded terminal is reused — instead
+	 * of leaving `from` behind as an orphan row and spawning a duplicate terminal
+	 * for `to`.
+	 *
+	 * `to` is brand new, so build its adapter from `from`'s workspace (same cwd):
+	 * its real title/metadata are filled in by the follow-up summary change /
+	 * re-list. If `from` was never cached there is no live slot to follow, so just
+	 * let `to` surface via the normal unknown-session path.
+	 */
+	private _handleSessionReplaced(from: URI | string, to: URI | string): void {
+		const rawFrom = AgentSession.id(from);
+		const rawTo = AgentSession.id(to);
+		if (rawFrom === rawTo) {
+			return;
+		}
+		const fromCached = this._sessionCache.get(rawFrom);
+		if (!fromCached) {
+			this._unknownSessionRefreshScheduler.schedule();
+			return;
+		}
+
+		let toCached = this._sessionCache.get(rawTo);
+		if (!toCached) {
+			const workingDirectory = fromCached.workspace.get()?.folders?.[0]?.workingDirectory;
+			const meta: IAgentSessionMetadata = {
+				session: typeof to === 'string' ? URI.parse(to) : to,
+				startTime: fromCached.createdAt.getTime(),
+				modifiedTime: Date.now(),
+				workingDirectory,
+			};
+			toCached = this.createAdapter(meta);
+			this._sessionCache.set(rawTo, toCached);
+		}
+
+		// Drop the abandoned session without the normal remove/dispose race: the
+		// replace event carries it to the consumers, which retire the old slot.
+		this._sessionCache.delete(rawFrom);
+		this._runningSessionConfigs.delete(fromCached.sessionId);
+		this._runningSessionConfigResolveSeq.delete(fromCached.sessionId);
+		this._sessionStateIdleTimers.deleteAndDispose(fromCached.sessionId);
+		this._sessionStateSubscriptions.deleteAndDispose(fromCached.sessionId);
+		this._lastSessionStates.delete(fromCached.sessionId);
+
+		this._onDidReplaceSession.fire({ from: fromCached, to: toCached });
+		fromCached.dispose();
 	}
 
 	private _handleTitleChanged(session: string, title: string): void {

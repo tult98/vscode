@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import type { Options, SDKSessionInfo, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { SequencerByKey } from '../../../../base/common/async.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
@@ -41,7 +41,8 @@ import { resolvePromptToContentBlocks } from './claudePromptResolver.js';
 import { IClaudeProxyHandle, IClaudeProxyService } from './claudeProxyService.js';
 import { readClaudePermissionMode } from './claudeSessionPermissionMode.js';
 import { ClaudeSessionMetadataStore, IClaudeSessionOverlay } from './claudeSessionMetadataStore.js';
-import { ClaudeCliSessionStatus, ClaudeCliSessionWatcher, IClaudeCliSessionChange } from './claudeCliSessionWatcher.js';
+import { ClaudeCliSessionStatus, ClaudeCliSessionWatcher, IClaudeCliSessionChange, IClaudeCliSessionReplace } from './claudeCliSessionWatcher.js';
+import type { IClaudeListedSession } from './claudeCliSessionStore.js';
 
 // Single source of truth for narrowing an arbitrary runtime value to
 // the closed `ClaudePermissionMode` union now lives in
@@ -242,6 +243,7 @@ export class ClaudeAgent extends Disposable implements IAgent {
 			// reload. See `claudeCliSessionWatcher.ts`.
 			this._cliWatcher = this._register(new ClaudeCliSessionWatcher(this._fileService, this._logService));
 			this._register(this._cliWatcher.onDidChangeSession(e => this._handleCliSessionChange(e)));
+			this._register(this._cliWatcher.onDidReplaceSession(e => this._handleCliSessionReplace(e)));
 			return;
 		}
 		// CAPI reports each request's billed credits via the proxy (the SDK
@@ -268,6 +270,19 @@ export class ClaudeAgent extends Disposable implements IAgent {
 		// resolves the same session id.
 		const session = AgentSession.uri(this.id, e.sessionId).toString();
 		this._onDidEmitNotification.fire({ type: NotificationType.SessionSummaryChanged, channel: ROOT_STATE_URI, session, changes: { status: toProtocolStatus(e.status) } });
+	}
+
+	/**
+	 * Translate a `/clear` continuation (one `claude` process changed its session
+	 * id in place) into a `sessionReplaced` notification, so the client re-keys
+	 * the live terminal `from`→`to` through its existing replace path instead of
+	 * adding the new id as a separate row. The abandoned `from` id is hidden from
+	 * {@link listSessions} via the watcher's superseded set.
+	 */
+	private _handleCliSessionReplace(e: IClaudeCliSessionReplace): void {
+		const from = AgentSession.uri(this.id, e.from).toString();
+		const to = AgentSession.uri(this.id, e.to).toString();
+		this._onDidEmitNotification.fire({ type: NotificationType.SessionReplaced, channel: ROOT_STATE_URI, from, to });
 	}
 
 	// #region Descriptor + auth
@@ -649,14 +664,29 @@ export class ClaudeAgent extends Disposable implements IAgent {
 		// import fails (corrupt install, missing optional dep) and we let
 		// it reject, *every* provider's session list disappears — the
 		// sibling Copilot provider gets nuked too. Catch and log instead.
-		let sdkEntries: readonly SDKSessionInfo[];
+		let sdkEntries: readonly IClaudeListedSession[];
 		try {
 			sdkEntries = await this._sdkService.listSessions();
 		} catch (err) {
 			this._logService.warn('[Claude] SDK listSessions failed; surfacing empty list', err);
 			return [];
 		}
-		const list = await Promise.all(sdkEntries.map(async entry => {
+		// Hide orphan and superseded sessions so the native CLI's `/clear`
+		// (and abandoned/empty sessions) do not accumulate as dead rows:
+		// - A `/clear` continuation marks the abandoned id superseded; its new id
+		//   carries the conversation, so drop the abandoned one.
+		// - A transcript with no assistant reply is an orphan UNLESS a live
+		//   process is running it (a brand-new session whose first turn is still
+		//   in flight, which the CLI watcher reports as live).
+		const watcher = this._cliWatcher;
+		const visibleEntries = sdkEntries.filter(entry => {
+			if (watcher?.isSuperseded(entry.sessionId)) {
+				return false;
+			}
+			const isLive = watcher ? watcher.statusFor(entry.sessionId) !== undefined : false;
+			return entry.hasContent || isLive;
+		});
+		const list = await Promise.all(visibleEntries.map(async entry => {
 			try {
 				const sessionUri = AgentSession.uri(this.id, entry.sessionId);
 				const overlay = await this._metadataStore.read(sessionUri);

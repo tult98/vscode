@@ -13,7 +13,7 @@ import { ILogService } from '../../../log/common/log.js';
 import { IAgentSdkDownloader, IAgentSdkPackage } from '../agentSdkDownloader.js';
 import { AgentHostClaudeSdkRootEnvVar, AgentHostClaudeUseCliEnvVar, isAgentEnabled } from '../../common/agentService.js';
 import { createClaudeCliWarmQuery } from './claudeCliQuery.js';
-import { cliGetSessionInfo, cliGetSessionMessages, cliGetSubagentMessages, cliListSessions, cliListSubagents } from './claudeCliSessionStore.js';
+import { cliGetSessionInfo, cliGetSessionMessages, cliGetSubagentMessages, cliListSessions, cliListSubagents, IClaudeListedSession } from './claudeCliSessionStore.js';
 
 /**
  * `@anthropic-ai/claude-agent-sdk` distribution descriptor. Lives in this
@@ -43,7 +43,7 @@ export const IClaudeAgentSdkService = createDecorator<IClaudeAgentSdkService>('c
 export interface IClaudeAgentSdkService {
 	readonly _serviceBrand: undefined;
 
-	listSessions(): Promise<readonly SDKSessionInfo[]>;
+	listSessions(): Promise<readonly IClaudeListedSession[]>;
 	getSessionInfo(sessionId: string): Promise<SDKSessionInfo | undefined>;
 	startup(params: { options: Options; initializeTimeoutMs?: number }): Promise<WarmQuery>;
 	getSessionMessages(sessionId: string, options?: GetSessionMessagesOptions): Promise<readonly SessionMessage[]>;
@@ -129,12 +129,15 @@ export class ClaudeAgentSdkService implements IClaudeAgentSdkService {
 		return isAgentEnabled(process.env[AgentHostClaudeUseCliEnvVar], false);
 	}
 
-	async listSessions(): Promise<readonly SDKSessionInfo[]> {
+	async listSessions(): Promise<readonly IClaudeListedSession[]> {
 		if (this._useCli()) {
 			return cliListSessions(this._logService);
 		}
 		const sdk = await this._getSdk();
-		return sdk.listSessions(undefined);
+		// The in-process SDK does not expose transcript-emptiness; treat every
+		// SDK-listed session as having content so none are filtered as orphans.
+		const sessions = await sdk.listSessions(undefined);
+		return sessions.map(session => ({ ...session, hasContent: true }));
 	}
 
 	async getSessionInfo(sessionId: string): Promise<SDKSessionInfo | undefined> {

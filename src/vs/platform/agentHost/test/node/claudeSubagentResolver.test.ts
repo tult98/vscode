@@ -12,6 +12,7 @@ import { NullLogService } from '../../../log/common/log.js';
 import { MessageKind, ResponsePartKind, ToolCallConfirmationReason, ToolCallStatus, ToolResultContentType, type Turn } from '../../common/state/protocol/state.js';
 import { buildSubagentSessionUri } from '../../common/state/sessionState.js';
 import { IClaudeAgentSdkService } from '../../node/claude/claudeAgentSdkService.js';
+import type { IClaudeListedSession } from '../../node/claude/claudeCliSessionStore.js';
 import { scanTranscriptForAgentIds, SUBAGENT_ID_SUFFIX_REGEX, SubagentRegistry } from '../../node/claude/claudeSubagentRegistry.js';
 import {
 	extractSpawningPromptFromTranscript,
@@ -41,7 +42,7 @@ class FakeSdkService implements IClaudeAgentSdkService {
 	listSubagentsCalls: string[] = [];
 	getSubagentMessagesCalls: { sessionId: string; agentId: string }[] = [];
 
-	async listSessions(): Promise<readonly SDKSessionInfo[]> { return []; }
+	async listSessions(): Promise<readonly IClaudeListedSession[]> { return []; }
 	async getSessionInfo(_id: string): Promise<SDKSessionInfo | undefined> { return undefined; }
 	async startup(_p: { options: Options; initializeTimeoutMs?: number }): Promise<WarmQuery> { throw new Error('not used'); }
 	async getSessionMessages(sessionId: string, options?: GetSessionMessagesOptions): Promise<readonly SessionMessage[]> {

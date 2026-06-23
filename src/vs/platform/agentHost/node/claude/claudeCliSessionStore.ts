@@ -34,6 +34,20 @@ import { ILogService } from '../../../log/common/log.js';
 const JSONL_SUFFIX = '.jsonl';
 const SUBAGENT_FILE_PREFIX = 'agent-';
 
+/**
+ * A listed session enriched with whether its transcript holds a real
+ * conversation. The native CLI leaves a transcript on disk for sessions that
+ * never produced a reply — e.g. a `/clear` continuation abandons the prior
+ * session id, or a session is opened and discarded — and those would otherwise
+ * accumulate as orphan rows in the sidebar. {@link hasContent} lets callers that
+ * also know live process status (the agent's CLI watcher) hide such orphans
+ * while keeping a brand-new session whose first turn is still in flight.
+ */
+export interface IClaudeListedSession extends SDKSessionInfo {
+	/** Whether the transcript contains at least one rendered assistant reply. */
+	readonly hasContent: boolean;
+}
+
 /** One parsed JSONL transcript line. Only the fields we read are typed. */
 interface IClaudeTranscriptEntry {
 	readonly type?: string;
@@ -183,7 +197,17 @@ function firstUserPrompt(entries: readonly IClaudeTranscriptEntry[]): string | u
 	return undefined;
 }
 
-function buildSessionInfo(entries: readonly IClaudeTranscriptEntry[], sessionId: string, lastModified: number, fileSize: number): SDKSessionInfo {
+/**
+ * Whether the transcript contains a rendered assistant reply. Orphan
+ * transcripts (e.g. left by `/clear`) carry only session-init scaffolding
+ * (`mode`, `file-history-snapshot`, meta `user`, `system`) and no assistant
+ * turn, so this is the robust signal for "a real conversation happened".
+ */
+function hasAssistantReply(entries: readonly IClaudeTranscriptEntry[]): boolean {
+	return entries.some(raw => raw.type === 'assistant' && isVisibleMessageEntry(raw));
+}
+
+function buildSessionInfo(entries: readonly IClaudeTranscriptEntry[], sessionId: string, lastModified: number, fileSize: number): IClaudeListedSession {
 	let customTitle: string | undefined;
 	let aiTitle: string | undefined;
 	let summaryEntry: string | undefined;
@@ -235,6 +259,7 @@ function buildSessionInfo(entries: readonly IClaudeTranscriptEntry[], sessionId:
 		gitBranch,
 		cwd,
 		createdAt,
+		hasContent: hasAssistantReply(entries),
 	};
 }
 
@@ -261,7 +286,7 @@ async function findSessionFile(sessionId: string): Promise<{ readonly filePath: 
 	return undefined;
 }
 
-export async function cliListSessions(logService: ILogService): Promise<SDKSessionInfo[]> {
+export async function cliListSessions(logService: ILogService): Promise<IClaudeListedSession[]> {
 	const root = projectsRoot();
 	let projectDirs: string[];
 	try {
@@ -272,7 +297,7 @@ export async function cliListSessions(logService: ILogService): Promise<SDKSessi
 		return [];
 	}
 
-	const results: SDKSessionInfo[] = [];
+	const results: IClaudeListedSession[] = [];
 	await Promise.all(projectDirs.map(async dir => {
 		let files;
 		try {
@@ -297,7 +322,7 @@ export async function cliListSessions(logService: ILogService): Promise<SDKSessi
 	return results;
 }
 
-export async function cliGetSessionInfo(sessionId: string, logService: ILogService): Promise<SDKSessionInfo | undefined> {
+export async function cliGetSessionInfo(sessionId: string, logService: ILogService): Promise<IClaudeListedSession | undefined> {
 	const found = await findSessionFile(sessionId);
 	if (!found) {
 		return undefined;

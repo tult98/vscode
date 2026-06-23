@@ -48,6 +48,7 @@ import { ClaudeAgent } from '../../node/claude/claudeAgent.js';
 import { ClaudeAgentSession } from '../../node/claude/claudeAgentSession.js';
 import { ClaudeSessionMetadataStore } from '../../node/claude/claudeSessionMetadataStore.js';
 import { ClaudeAgentSdkService, IClaudeAgentSdkService, IClaudeSdkBindings } from '../../node/claude/claudeAgentSdkService.js';
+import type { IClaudeListedSession } from '../../node/claude/claudeCliSessionStore.js';
 import { IAgentSdkDownloader } from '../../node/agentSdkDownloader.js';
 import { PendingRequestRegistry } from '../../common/pendingRequestRegistry.js';
 import { IClaudeProxyCreditsReport, IClaudeProxyHandle, IClaudeProxyService } from '../../node/claude/claudeProxyService.js';
@@ -122,7 +123,7 @@ class FakeClaudeAgentSdkService implements IClaudeAgentSdkService {
 	 * before invoking the agent under test. Defaults to empty so suites
 	 * that don't care about session enumeration aren't forced to set it.
 	 */
-	sessionList: readonly SDKSessionInfo[] = [];
+	sessionList: readonly (SDKSessionInfo & { readonly hasContent?: boolean })[] = [];
 	listSessionsCallCount = 0;
 
 	/**
@@ -175,13 +176,15 @@ class FakeClaudeAgentSdkService implements IClaudeAgentSdkService {
 	 */
 	listSessionsRejection: Error | undefined;
 
-	async listSessions(): Promise<readonly SDKSessionInfo[]> {
+	async listSessions(): Promise<readonly IClaudeListedSession[]> {
 		this.listSessionsCallCount++;
 		if (this.listSessionsRejection) {
 			const err = this.listSessionsRejection;
 			throw err;
 		}
-		return this.sessionList;
+		// Stagings set only SDK fields; default `hasContent` so they are not
+		// filtered as orphans. Tests exercising the orphan filter set it per case.
+		return this.sessionList.map(s => ({ hasContent: true, ...s }));
 	}
 
 	/**
@@ -2419,6 +2422,30 @@ suite('ClaudeAgent', () => {
 			custDirB: undefined,
 			sdkCalls: 1,
 		});
+	});
+
+	test('listSessions hides orphan sessions with no content and no live process', async () => {
+		// A `/clear` (or abandoned/empty session) leaves a transcript with no
+		// assistant reply. With no live process for it, it must not surface as a
+		// dead row; a session with real content still does.
+		const sdk = new FakeClaudeAgentSdkService();
+		sdk.sessionList = [
+			{ sessionId: 'real', summary: 'Real', lastModified: 200, hasContent: true },
+			{ sessionId: 'orphan', summary: 'Orphan', lastModified: 100, hasContent: false },
+		];
+
+		const services = new ServiceCollection(
+			[ILogService, new NullLogService()],
+			[IClaudeProxyService, new FakeClaudeProxyService()],
+			[ISessionDataService, createNullSessionDataService()],
+			[IClaudeAgentSdkService, sdk],
+			[IAgentPluginManager, new FakeAgentPluginManager()],
+		);
+		const instantiationService = disposables.add(new InstantiationService(services));
+		const agent = disposables.add(instantiationService.createInstance(ClaudeAgent));
+
+		const result = await agent.listSessions();
+		assert.deepStrictEqual(result.map(r => AgentSession.id(r.session)), ['real']);
 	});
 
 	test('listSessions tolerates a corrupt DB without poisoning the rest of the listing', async () => {

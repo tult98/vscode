@@ -29,6 +29,17 @@ export interface IClaudeCliSessionChange {
 	readonly status: ClaudeCliSessionStatus;
 }
 
+/**
+ * A single `claude` process changed its session id — the hallmark of the
+ * `/clear` slash command, which abandons the current conversation and starts a
+ * fresh session id within the *same* process. `from` is the abandoned id, `to`
+ * the new one.
+ */
+export interface IClaudeCliSessionReplace {
+	readonly from: string;
+	readonly to: string;
+}
+
 /** Shape of `<configDir>/sessions/<pid>.json` (only the fields we read). */
 interface IClaudeSessionStateFile {
 	readonly sessionId?: string;
@@ -59,8 +70,22 @@ export class ClaudeCliSessionWatcher extends Disposable {
 	private readonly _onDidChangeSession = this._register(new Emitter<IClaudeCliSessionChange>());
 	readonly onDidChangeSession: Event<IClaudeCliSessionChange> = this._onDidChangeSession.event;
 
+	private readonly _onDidReplaceSession = this._register(new Emitter<IClaudeCliSessionReplace>());
+	readonly onDidReplaceSession: Event<IClaudeCliSessionReplace> = this._onDidReplaceSession.event;
+
 	/** Last known status per session id. Sessions absent here are treated as `idle`. */
 	private readonly _statuses = new Map<string, ClaudeCliSessionStatus>();
+
+	/** Last known session id per live process, to detect a `/clear` continuation (same pid, new id). */
+	private readonly _pidSession = new Map<number, string>();
+
+	/**
+	 * Session ids abandoned by a `/clear` continuation whose new id now carries
+	 * the conversation. Kept so the agent can hide the abandoned id from the
+	 * session list instead of leaving an orphan row. An id is dropped from here
+	 * if a live process reports it again (e.g. it is explicitly resumed).
+	 */
+	private readonly _superseded = new Set<string>();
 
 	private readonly _stateDir = join(claudeConfigDir(), 'sessions');
 
@@ -77,6 +102,11 @@ export class ClaudeCliSessionWatcher extends Disposable {
 	/** Current live status for a session, or `undefined` when it is not running. */
 	statusFor(sessionId: string): ClaudeCliSessionStatus | undefined {
 		return this._statuses.get(sessionId);
+	}
+
+	/** Whether a `/clear` continuation has abandoned this session id for a new one. */
+	isSuperseded(sessionId: string): boolean {
+		return this._superseded.has(sessionId);
 	}
 
 	private _start(): void {
@@ -118,6 +148,8 @@ export class ClaudeCliSessionWatcher extends Disposable {
 		// process are skipped via the liveness check so a session never sticks
 		// on `busy` forever.
 		const current = new Map<string, { status: ClaudeCliSessionStatus; updatedAt: number }>();
+		// Session id per live pid this scan, to spot a `/clear` continuation.
+		const currentPidSession = new Map<number, string>();
 		await Promise.all(files.map(async name => {
 			if (!name.endsWith('.json')) {
 				return;
@@ -133,12 +165,38 @@ export class ClaudeCliSessionWatcher extends Disposable {
 			if (!sessionId || !status || !isProcessAlive(state.pid)) {
 				return;
 			}
+			if (typeof state.pid === 'number') {
+				currentPidSession.set(state.pid, sessionId);
+			}
 			const updatedAt = typeof state.statusUpdatedAt === 'number' ? state.statusUpdatedAt : 0;
 			const existing = current.get(sessionId);
 			if (!existing || updatedAt >= existing.updatedAt) {
 				current.set(sessionId, { status, updatedAt });
 			}
 		}));
+
+		// Detect `/clear` continuations: a live pid whose session id changed
+		// since the last scan. Drive this strictly off the per-pid map (never the
+		// by-session `current` map, which collapses shared ids). Only treat it as
+		// a replace when no *other* live process still holds the old id, so a
+		// resumed session shared across processes is not wrongly retired.
+		const replacements: IClaudeCliSessionReplace[] = [];
+		for (const [pid, to] of currentPidSession) {
+			const from = this._pidSession.get(pid);
+			if (from !== undefined && from !== to && !current.has(from)) {
+				replacements.push({ from, to });
+				this._superseded.add(from);
+			}
+		}
+		// A session reported live again (e.g. explicitly resumed) is no longer
+		// superseded.
+		for (const sessionId of current.keys()) {
+			this._superseded.delete(sessionId);
+		}
+		this._pidSession.clear();
+		for (const [pid, sessionId] of currentPidSession) {
+			this._pidSession.set(pid, sessionId);
+		}
 
 		// Diff against the previous snapshot and emit per changed session. A
 		// session that dropped out of `current` (its process exited) settles to
@@ -160,6 +218,11 @@ export class ClaudeCliSessionWatcher extends Disposable {
 			this._statuses.set(sessionId, status);
 		}
 
+		// Fire the `/clear` continuations first so a client re-keys the live
+		// terminal A→B before A would otherwise settle to `idle` below.
+		for (const replace of replacements) {
+			this._onDidReplaceSession.fire(replace);
+		}
 		for (const change of changed) {
 			this._onDidChangeSession.fire(change);
 		}

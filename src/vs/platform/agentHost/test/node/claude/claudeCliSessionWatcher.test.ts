@@ -15,13 +15,16 @@ import { generateUuid } from '../../../../../base/common/uuid.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { FileChangesEvent, FileChangeType, IFileChange, IFileService } from '../../../../files/common/files.js';
 import { NullLogService } from '../../../../log/common/log.js';
-import { ClaudeCliSessionWatcher, IClaudeCliSessionChange } from '../../../node/claude/claudeCliSessionWatcher.js';
+import { ClaudeCliSessionWatcher, IClaudeCliSessionChange, IClaudeCliSessionReplace } from '../../../node/claude/claudeCliSessionWatcher.js';
 
 suite('ClaudeCliSessionWatcher', () => {
 
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
 
 	const ALIVE_PID = process.pid;
+	// The parent process is alive for the duration of the test run, giving a
+	// second distinct live pid for the shared-session-id case.
+	const ALIVE_PID_2 = process.ppid;
 	const DEAD_PID = 2147483646;
 
 	let configDir: string;
@@ -44,6 +47,12 @@ suite('ClaudeCliSessionWatcher', () => {
 	function collect(watcher: ClaudeCliSessionWatcher): IClaudeCliSessionChange[] {
 		const events: IClaudeCliSessionChange[] = [];
 		store.add(watcher.onDidChangeSession(e => events.push(e)));
+		return events;
+	}
+
+	function collectReplace(watcher: ClaudeCliSessionWatcher): IClaudeCliSessionReplace[] {
+		const events: IClaudeCliSessionReplace[] = [];
+		store.add(watcher.onDidReplaceSession(e => events.push(e)));
 		return events;
 	}
 
@@ -112,5 +121,59 @@ suite('ClaudeCliSessionWatcher', () => {
 			{ sessionId: 'abc', status: 'busy' },
 			{ sessionId: 'abc', status: 'idle' },
 		]);
+	});
+
+	test('a `/clear` continuation (same pid, new session id) emits one replace and supersedes the old id', async () => {
+		await writeState('1.json', { sessionId: 'A', status: 'busy', pid: ALIVE_PID, statusUpdatedAt: 1 });
+
+		const { service, fire } = createFakeFileService();
+		const watcher = store.add(new ClaudeCliSessionWatcher(service, new NullLogService()));
+		const replaces = collectReplace(watcher);
+		await timeout(50);
+		assert.deepStrictEqual(replaces, []);
+
+		// `/clear`: the same process rewrites its state file with a fresh id.
+		await writeState('1.json', { sessionId: 'B', status: 'busy', pid: ALIVE_PID, statusUpdatedAt: 2 });
+		fire([{ resource: URI.file(join(stateDir, '1.json')), type: FileChangeType.UPDATED }]);
+		await timeout(400);
+
+		assert.deepStrictEqual(replaces, [{ from: 'A', to: 'B' }]);
+		assert.strictEqual(watcher.isSuperseded('A'), true);
+		assert.strictEqual(watcher.isSuperseded('B'), false);
+	});
+
+	test('a process simply exiting does not emit a replace or supersede its id', async () => {
+		await writeState('1.json', { sessionId: 'A', status: 'busy', pid: ALIVE_PID, statusUpdatedAt: 1 });
+
+		const { service, fire } = createFakeFileService();
+		const watcher = store.add(new ClaudeCliSessionWatcher(service, new NullLogService()));
+		const replaces = collectReplace(watcher);
+		await timeout(50);
+
+		// The process exits: its state file is removed.
+		await fs.rm(join(stateDir, '1.json'));
+		fire([{ resource: URI.file(join(stateDir, '1.json')), type: FileChangeType.DELETED }]);
+		await timeout(400);
+
+		assert.deepStrictEqual(replaces, []);
+		assert.strictEqual(watcher.isSuperseded('A'), false);
+	});
+
+	test('a clear by one of several processes sharing a session id does not supersede the still-live id', async () => {
+		await writeState('1.json', { sessionId: 'A', status: 'idle', pid: ALIVE_PID, statusUpdatedAt: 1 });
+		await writeState('2.json', { sessionId: 'A', status: 'idle', pid: ALIVE_PID_2, statusUpdatedAt: 1 });
+
+		const { service, fire } = createFakeFileService();
+		const watcher = store.add(new ClaudeCliSessionWatcher(service, new NullLogService()));
+		const replaces = collectReplace(watcher);
+		await timeout(50);
+
+		// One of the two processes clears to B; the other still holds A.
+		await writeState('1.json', { sessionId: 'B', status: 'busy', pid: ALIVE_PID, statusUpdatedAt: 2 });
+		fire([{ resource: URI.file(join(stateDir, '1.json')), type: FileChangeType.UPDATED }]);
+		await timeout(400);
+
+		assert.deepStrictEqual(replaces, []);
+		assert.strictEqual(watcher.isSuperseded('A'), false);
 	});
 });

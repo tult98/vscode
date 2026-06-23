@@ -380,6 +380,15 @@ function fireSessionSummaryChanged(agentHost: MockAgentHostService, rawId: strin
 	});
 }
 
+function fireSessionReplaced(agentHost: MockAgentHostService, fromRawId: string, toRawId: string, provider = 'copilotcli'): void {
+	agentHost.fireNotification({
+		channel: 'ahp-root://',
+		type: NotificationType.SessionReplaced,
+		from: AgentSession.uri(provider, fromRawId).toString(),
+		to: AgentSession.uri(provider, toRawId).toString(),
+	});
+}
+
 suite('LocalAgentHostSessionsProvider', () => {
 	const disposables = new DisposableStore();
 	let agentHost: MockAgentHostService;
@@ -627,6 +636,26 @@ suite('LocalAgentHostSessionsProvider', () => {
 
 		assert.deepStrictEqual(removed, [], 'hidden sessions must not be reported as removed');
 		assert.deepStrictEqual(provider.getSessions().map(s => s.sessionType), []);
+	});
+
+	test('sessionReplaced re-keys the cache and fires onDidReplaceSession with no net-new session', () => {
+		const provider = createProvider(disposables, agentHost);
+		fireSessionAdded(agentHost, 'A', { title: 'Conversation' });
+		assert.deepStrictEqual(provider.getSessions().map(s => AgentSession.id(s.resource)), ['A']);
+
+		const replaces: { from: string; to: string }[] = [];
+		disposables.add(provider.onDidReplaceSession(e => replaces.push({ from: AgentSession.id(e.from.resource), to: AgentSession.id(e.to.resource) })));
+
+		// A `/clear` continuation: the live session A is replaced in place by B.
+		fireSessionReplaced(agentHost, 'A', 'B');
+
+		assert.deepStrictEqual({
+			replaces,
+			sessions: provider.getSessions().map(s => AgentSession.id(s.resource)),
+		}, {
+			replaces: [{ from: 'A', to: 'B' }],
+			sessions: ['B'],
+		});
 	});
 
 	test('session icons match the session type icon', () => {

@@ -459,9 +459,17 @@ export class AgentService extends Disposable implements IAgentService {
 		const withStatus = result.map(s => {
 			const liveState = this._stateManager.getSessionState(s.session.toString());
 			if (liveState) {
+				// A live title that is empty or still the raw session id is a
+				// placeholder (e.g. a terminal Claude session restored before
+				// Claude wrote its ai-title); prefer the freshly file-derived
+				// summary in that case so the on-disk ai-title is surfaced. Real
+				// generated/renamed titles (Copilot/SDK, /rename) are never equal
+				// to the raw id, so they still take priority.
+				const liveTitle = liveState.summary.title;
+				const summary = (liveTitle && liveTitle !== AgentSession.id(s.session)) ? liveTitle : s.summary;
 				return {
 					...s,
-					summary: liveState.summary.title || s.summary,
+					summary,
 					status: liveState.summary.status,
 					activity: liveState.summary.activity,
 					model: liveState.summary.model ?? s.model,
